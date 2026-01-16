@@ -1,6 +1,6 @@
 import {
     pointerToGridDelta, computeTargetPositions, getCellSize, clearCellHighlights,
-    findTargetCellsForGroup, highlightTargetCells, snapTileToCell, moveTilesPixel
+    snapTileToCell, moveTilesPixel
 } from './drag.js';
 
 export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
@@ -19,7 +19,7 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
     const getCell = (x, y) => gridEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
 
     const clearSelection = () => {
-        selectedIds.forEach(id => $(id)?.classList.remove('tile--selected', 'tile--dragging'));
+        selectedIds.forEach(id => $(id)?.classList.remove('tile--selected', 'tile--dragging', 'tile--invalid-drop'));
         selectedIds = new Set();
         origGridPos.clear();
         origPixelPos.clear();
@@ -27,8 +27,6 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         selectionRect = null;
         gridEl.removeEventListener('pointerdown', onDragStart);
     };
-
-    // ===== SELECTION RECTANGLE =====
 
     const onGridDown = e => {
         if (e.target.closest('.tile')) return;
@@ -87,11 +85,25 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         setTimeout(() => justFinishedSelecting = false, 100);
     };
 
-    // ===== GROUP DRAG =====
-
     const onDragStart = e => {
         const tile = e.target.closest('.tile--selected');
         if (!tile) { clearSelection(); return; }
+
+        if (selectedIds.size === 1) {
+            tile.classList.remove('tile--selected');
+            selectedIds.clear();
+            gridEl.removeEventListener('pointerdown', onDragStart);
+            const newEvent = new PointerEvent('pointerdown', {
+                bubbles: true,
+                cancelable: true,
+                clientX: e.clientX,
+                clientY: e.clientY,
+                pointerId: e.pointerId,
+                pointerType: e.pointerType
+            });
+            tile.dispatchEvent(newEvent);
+            return;
+        }
 
         e.preventDefault();
         e.stopPropagation();
@@ -104,10 +116,8 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         selectedIds.forEach(id => {
             const el = $(id);
             if (!el) return;
-
             const pos = [...state.grid].find(([, tid]) => tid === id)?.[0];
             if (!pos) return;
-
             const [x, y] = pos.split(',').map(Number);
             origGridPos.set(id, { x, y });
             origPixelPos.set(id, { left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0 });
@@ -118,28 +128,30 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         document.addEventListener('pointerup', onDragEnd);
     };
 
+    const setInvalidDropState = isInvalid => {
+        selectedIds.forEach(id => {
+            const el = $(id);
+            if (el) el.classList.toggle('tile--invalid-drop', isInvalid);
+        });
+    };
+
     const onDragMove = e => {
         if (!isDragging) return;
-
         const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
         moveTilesPixel(selectedIds, origPixelPos, dx, dy);
-
         clearCellHighlights(gridEl);
         const cellSize = getCellSize(gridEl);
         const delta = pointerToGridDelta({ x: e.clientX, y: e.clientY }, dragStart, cellSize);
         const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
 
         if (valid && updates) {
+            setInvalidDropState(false);
             updates.forEach(({ newX, newY }) => {
                 const cell = getCell(newX, newY);
                 cell?.classList.add('grid-cell--valid-target');
             });
         } else {
-            const targets = findTargetCellsForGroup(selectedIds, gridEl, dx, dy, origPixelPos);
-            highlightTargetCells(targets, (x, y, id) => {
-                const occupant = state.grid.get(`${x},${y}`);
-                return !occupant || selectedIds.has(occupant);
-            });
+            setInvalidDropState(true);
         }
     };
 
@@ -148,9 +160,15 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         document.removeEventListener('pointerup', onDragEnd);
         isDragging = false;
         clearCellHighlights(gridEl);
+        setInvalidDropState(false);
 
+        const gridRect = gridEl.getBoundingClientRect();
         const rackRect = document.querySelector('.rack-container').getBoundingClientRect();
-        if (e.clientY > rackRect.top) {
+        const isOutsideGrid = e.clientX < gridRect.left || e.clientX > gridRect.right ||
+            e.clientY < gridRect.top || e.clientY > gridRect.bottom;
+        const isOverRack = e.clientY > rackRect.top;
+
+        if (isOutsideGrid || isOverRack) {
             onTilesReturn([...selectedIds]);
             clearSelection();
             return;
@@ -166,9 +184,8 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         }
 
         const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
-
         if (!valid || updates.length !== selectedIds.size) {
-            onTilesReturn([...selectedIds]);
+            snapBack();
             clearSelection();
             return;
         }
@@ -181,7 +198,10 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
                 el.dataset.gridX = u.newX;
                 el.dataset.gridY = u.newY;
                 snapTileToCell(el, gridEl, u.newX, u.newY);
-                el.classList.remove('tile--dragging');
+                el.classList.remove('tile--dragging', 'tile--snapping');
+                void el.offsetWidth;
+                el.classList.add('tile--snapping');
+                el.addEventListener('animationend', () => el.classList.remove('tile--snapping'), { once: true });
             }
         });
 
@@ -194,7 +214,10 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
             const el = $(id), orig = origGridPos.get(id);
             if (el && orig) {
                 snapTileToCell(el, gridEl, orig.x, orig.y);
-                el.classList.remove('tile--dragging');
+                el.classList.remove('tile--dragging', 'tile--snapping');
+                void el.offsetWidth;
+                el.classList.add('tile--snapping');
+                el.addEventListener('animationend', () => el.classList.remove('tile--snapping'), { once: true });
             }
         });
     };

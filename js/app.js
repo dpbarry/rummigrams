@@ -1,6 +1,6 @@
 import { validateBoard } from './engine.js';
 import { generateLevel } from './generator.js';
-import { renderGridCells, renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, triggerVictory, createConfetti, repositionPlacedTiles, createCellRipple, initRippleSystem, initRackTransition } from './renderer.js';
+import { renderGridCells, renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, triggerVictory, createConfetti, repositionPlacedTiles, createCellParticleBurst, initParticleBurstSystem, initRackTransition } from './renderer.js';
 import { initInteractions } from './interactions.js';
 import { initToolbar, calcRemainingTiles, updateRemainingCounter } from './toolbar.js';
 import { initSelection } from './selection.js';
@@ -26,18 +26,16 @@ const cycleTheme = () => {
     localStorage.setItem('rummigrams-theme', next);
 
     requestAnimationFrame(() => {
-        const gridEl = $('game-grid'), rackEl = $('tile-rack'), themeBtn = $('btn-theme');
-
         setTimeout(() => document.body.classList.remove('is-remodeling'), 50);
     });
 };
+
 const loadTheme = () => {
     const saved = localStorage.getItem('rummigrams-theme');
     if (saved && themes.includes(saved)) document.documentElement.dataset.theme = saved;
 };
 
 const gridEl = $('game-grid'), rackEl = $('tile-rack'), themeBtn = $('btn-theme');
-
 
 const buildValueGrid = () => new Map([...state.grid].map(([pos, id]) => [pos, state.tiles.get(id)]));
 
@@ -58,12 +56,32 @@ const removeTile = (id, x, y, toRack = true) => {
     runValidation();
 };
 
-const isCellOccupied = (x, y) => state.grid.has(`${x},${y}`);
+const getTileAt = (x, y) => state.grid.get(`${x},${y}`) || null;
+
+const swapTiles = (draggedId, draggedOrigPos, occupantId, targetX, targetY) => {
+    const draggedEl = $(draggedId), occupantEl = $(occupantId);
+    if (!draggedEl || !occupantEl) return;
+
+    state.grid.delete(`${targetX},${targetY}`);
+    if (draggedOrigPos) state.grid.delete(`${draggedOrigPos.x},${draggedOrigPos.y}`);
+
+    state.grid.set(`${targetX},${targetY}`, draggedId);
+    state.hand.delete(draggedId);
+    positionTileOnGrid(draggedEl, targetX, targetY, gridEl);
+
+    if (draggedOrigPos) {
+        state.grid.set(`${draggedOrigPos.x},${draggedOrigPos.y}`, occupantId);
+        positionTileOnGrid(occupantEl, draggedOrigPos.x, draggedOrigPos.y, gridEl);
+    } else {
+        state.hand.add(occupantId);
+        returnTileToRack(occupantEl, rackEl);
+    }
+
+    runValidation();
+};
 
 const runValidation = () => {
     const grid = buildValueGrid();
-    const validGroups = state.validation?.validGroupPositions || new Set();
-    const remaining = calcRemainingTiles(state, validGroups);
 
     if (!grid.size) {
         state.validation = null;
@@ -72,13 +90,12 @@ const runValidation = () => {
     }
 
     state.validation = validateBoard(grid);
-    updateTileStates(gridEl, state.validation.validGroupPositions, state.validation.noBlockRule.blockPositions, state.validation.impossiblePositions);
+    updateTileStates(gridEl, state.validation.validPositions, state.validation.blockPositions, state.validation.impossiblePositions);
 
-    const newRemaining = calcRemainingTiles(state, state.validation.validGroupPositions);
-
+    const remaining = calcRemainingTiles(state, state.validation.validPositions);
     if (!state.hand.size && state.validation.valid) return handleVictory();
 
-    updateRemainingCounter(newRemaining);
+    updateRemainingCounter(remaining);
 };
 
 const handleVictory = () => {
@@ -123,7 +140,7 @@ const returnAllToHand = () => {
     handleTilesReturn(placedIds);
 };
 
-let rippleInitialized = false;
+let particleBurstInitialized = false;
 const newGame = () => {
     state.grid.clear(); state.tiles.clear(); state.hand.clear();
     state.validation = null; state.isVictory = false;
@@ -132,14 +149,14 @@ const newGame = () => {
     hand.forEach((v, i) => { const id = `tile-${i}`; state.tiles.set(id, v); state.hand.add(id); });
 
     renderGridCells(gridEl, state.level.gridSize, state.level.gridSize);
-    if (!rippleInitialized) { initRippleSystem(gridEl); rippleInitialized = true; }
+    if (!particleBurstInitialized) { initParticleBurstSystem(gridEl); particleBurstInitialized = true; }
     renderRack(rackEl, state.tiles, state.hand);
     updateRemainingCounter(state.tiles.size);
 };
 
 const init = () => {
     loadTheme();
-    initInteractions({ gridEl, rackEl, onTilePlaced: placeTile, onTileReturned: removeTile, isCellOccupied, createCellRipple });
+    initInteractions({ gridEl, rackEl, onTilePlaced: placeTile, onTileReturned: removeTile, getTileAt, swapTiles, createCellParticleBurst });
     initToolbar({ state, rackEl, onScatter: scatterToBoard, onReturnAll: returnAllToHand });
     initSelection({ gridEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
     themeBtn.addEventListener('click', cycleTheme);
@@ -148,11 +165,8 @@ const init = () => {
     const resizeObserver = new ResizeObserver(() => {
         document.body.classList.add('is-remodeling');
         requestAnimationFrame(() => repositionPlacedTiles(gridEl));
-
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-            document.body.classList.remove('is-remodeling');
-        }, 100);
+        resizeTimer = setTimeout(() => document.body.classList.remove('is-remodeling'), 100);
     });
     resizeObserver.observe(document.body);
 

@@ -1,10 +1,8 @@
-// Pure helper: pointer delta to grid delta
 export const pointerToGridDelta = (current, start, cellSize) => ({
     dx: Math.round((current.x - start.x) / cellSize.w),
     dy: Math.round((current.y - start.y) / cellSize.h)
 });
 
-// Pure helper: compute new positions for tiles given grid delta
 export const computeTargetPositions = (origPositions, delta, gridSize, occupiedMap, movingIds) => {
     const updates = [];
     const targetSet = new Set();
@@ -25,7 +23,6 @@ export const computeTargetPositions = (origPositions, delta, gridSize, occupiedM
     return { valid: true, updates };
 };
 
-// Find closest cell for a given client point
 export const getClosestCell = (gridEl, clientX, clientY) => {
     const gridRect = gridEl.getBoundingClientRect();
     if (clientX < gridRect.left || clientX > gridRect.right || clientY < gridRect.top || clientY > gridRect.bottom) return null;
@@ -38,44 +35,15 @@ export const getClosestCell = (gridEl, clientX, clientY) => {
     }
     return closest;
 };
-
-// Find target cells for each tile in a group given pixel offsets
-export const findTargetCellsForGroup = (tiles, gridEl, dx, dy, origPixelPositions) => {
-    const results = [];
-    tiles.forEach(id => {
-        const orig = origPixelPositions.get(id);
-        if (!orig) return;
-        const el = document.getElementById(id);
-        if (!el) return;
-        const rect = el.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-        const cell = getClosestCell(gridEl, cx, cy);
-        if (cell) results.push({ id, cell });
-    });
-    return results;
-};
-
-// Clear all cell highlights
 export const clearCellHighlights = gridEl => {
-    gridEl.querySelectorAll('.grid-cell--valid-target, .grid-cell--invalid-target')
-        .forEach(c => c.classList.remove('grid-cell--valid-target', 'grid-cell--invalid-target'));
+    gridEl.querySelectorAll('.grid-cell--valid-target')
+        .forEach(c => c.classList.remove('grid-cell--valid-target'));
 };
-
-// Apply highlights to target cells (each gets valid/invalid based on occupancy check)
-export const highlightTargetCells = (targetCells, isValidFn) => {
-    targetCells.forEach(({ id, cell }) => {
-        const x = +cell.dataset.x, y = +cell.dataset.y;
-        cell.classList.add(isValidFn(x, y, id) ? 'grid-cell--valid-target' : 'grid-cell--invalid-target');
-    });
-};
-
-// Get cell size from grid
 export const getCellSize = gridEl => {
     const cell = gridEl.querySelector('.grid-cell');
     return cell ? { w: cell.offsetWidth, h: cell.offsetHeight } : { w: 50, h: 50 };
 };
 
-// Snap a tile element to its grid cell
 export const snapTileToCell = (el, gridEl, x, y) => {
     const cell = gridEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
     if (cell) {
@@ -84,7 +52,6 @@ export const snapTileToCell = (el, gridEl, x, y) => {
     }
 };
 
-// Move tiles visually during drag
 export const moveTilesPixel = (tiles, origPixelPositions, dx, dy) => {
     tiles.forEach(id => {
         const el = document.getElementById(id);

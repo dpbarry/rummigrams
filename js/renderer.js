@@ -1,8 +1,9 @@
-import { rippleSystem } from './ripple.js';
+import { particleBurstSystem } from './particleburst.js';
 
 const createElement = (tag, className, attrs = {}) => {
     const el = document.createElement(tag);
     if (className) el.className = className;
+    // noinspection JSCheckFunctionSignatures
     Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
     return el;
 };
@@ -76,27 +77,20 @@ export const returnTileToRack = (tileEl, rackEl) => {
 export const updateTileStates = (gridEl, validPositions, blockPositions, impossiblePositions = new Set()) => {
     gridEl.querySelectorAll('.tile--placed').forEach(tile => {
         const pos = `${tile.dataset.gridX},${tile.dataset.gridY}`;
-        tile.classList.remove('tile--valid', 'tile--invalid', 'tile--block-error', 'tile--impossible');
-
+        tile.classList.remove('tile--valid', 'tile--block-error', 'tile--impossible');
         if (blockPositions.has(pos)) tile.classList.add('tile--block-error');
         else if (impossiblePositions.has(pos)) tile.classList.add('tile--impossible');
         else if (validPositions.has(pos)) tile.classList.add('tile--valid');
     });
 };
 
-export const initRippleSystem = gridEl => rippleSystem.attach(gridEl);
+export const initParticleBurstSystem = gridEl => particleBurstSystem.attach(gridEl);
 
-export const createCellRipple = cell => {
+export const createCellParticleBurst = cell => {
     const x = cell.offsetLeft + cell.offsetWidth / 2;
     const y = cell.offsetTop + cell.offsetHeight / 2;
-    rippleSystem.emit(x, y);
+    particleBurstSystem.emit(x, y);
 };
-
-export const updateStatus = (statusEl, state, text) => {
-    statusEl.dataset.state = state;
-    statusEl.querySelector('.status-text').textContent = text;
-};
-
 export const triggerVictory = gridEl => {
     gridEl.querySelectorAll('.tile--placed').forEach((tile, i) => {
         tile.style.animationDelay = `${i * 40}ms`;
@@ -148,26 +142,21 @@ export const initRackTransition = rackEl => {
 
     const observer = new ResizeObserver(entries => {
         if (isAnimating) return;
-
         const newHeight = entries[0].contentRect.height;
-
         if (isFirstObservation) {
             isFirstObservation = false;
             lastHeight = newHeight;
             return;
         }
-
         const diff = Math.abs(newHeight - lastHeight);
         if (diff > 2 && lastHeight > 0) {
             isAnimating = true;
             clearTimeout(transitionTimeout);
-
             rackEl.style.overflow = 'hidden';
             rackEl.style.height = `${lastHeight}px`;
             rackEl.offsetHeight;
             rackEl.style.transition = 'height 100ms ease-out';
             rackEl.style.height = `${newHeight}px`;
-
             transitionTimeout = setTimeout(cleanup, 120);
         } else {
             lastHeight = newHeight;
@@ -177,5 +166,3 @@ export const initRackTransition = rackEl => {
     observer.observe(rackEl);
     return observer;
 };
-
-
