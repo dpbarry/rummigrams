@@ -85,6 +85,7 @@ export const updateTileStates = (gridEl, validPositions, blockPositions, impossi
 };
 
 export const initParticleBurstSystem = gridEl => particleBurstSystem.attach(gridEl);
+export const cleanupParticleBurstSystem = () => particleBurstSystem.destroy();
 
 export const createCellParticleBurst = cell => {
     const x = cell.offsetLeft + cell.offsetWidth / 2;
@@ -142,7 +143,10 @@ export const initRackTransition = rackEl => {
 
     const observer = new ResizeObserver(entries => {
         if (isAnimating) return;
-        const newHeight = entries[0].contentRect.height;
+
+        const entry = entries[0];
+        const newHeight = entry.borderBoxSize?.[0]?.blockSize ?? rackEl.offsetHeight;
+
         if (isFirstObservation) {
             isFirstObservation = false;
             lastHeight = newHeight;
@@ -154,7 +158,7 @@ export const initRackTransition = rackEl => {
             clearTimeout(transitionTimeout);
             rackEl.style.overflow = 'hidden';
             rackEl.style.height = `${lastHeight}px`;
-            rackEl.offsetHeight;
+            void rackEl.offsetHeight;
             rackEl.style.transition = 'height 100ms ease-out';
             rackEl.style.height = `${newHeight}px`;
             transitionTimeout = setTimeout(cleanup, 120);

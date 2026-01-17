@@ -1,6 +1,10 @@
 import { validateBoard } from './engine.js';
+import { toggleTheme, initTheme } from './theme.js';
 import { generateLevel } from './generator.js';
-import { renderGridCells, renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, triggerVictory, createConfetti, repositionPlacedTiles, createCellParticleBurst, initParticleBurstSystem, initRackTransition } from './renderer.js';
+import {
+    renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, renderGridCells,
+    initParticleBurstSystem, createCellParticleBurst, triggerVictory, createConfetti, repositionPlacedTiles, initRackTransition, cleanupParticleBurstSystem
+} from './renderer.js';
 import { initInteractions } from './interactions.js';
 import { initToolbar, calcRemainingTiles, updateRemainingCounter } from './toolbar.js';
 import { initSelection } from './selection.js';
@@ -16,26 +20,10 @@ const state = {
 
 const $ = id => document.getElementById(id);
 
-const themes = ['light', 'dark'];
-const cycleTheme = () => {
-    document.body.classList.add('is-remodeling');
-    const html = document.documentElement;
-    const current = html.dataset.theme || 'light';
-    const next = themes[(themes.indexOf(current) + 1) % themes.length];
-    html.dataset.theme = next;
-    localStorage.setItem('rummigrams-theme', next);
+let gridEl, rackEl, themeBtn;
 
-    requestAnimationFrame(() => {
-        setTimeout(() => document.body.classList.remove('is-remodeling'), 50);
-    });
-};
 
-const loadTheme = () => {
-    const saved = localStorage.getItem('rummigrams-theme');
-    if (saved && themes.includes(saved)) document.documentElement.dataset.theme = saved;
-};
 
-const gridEl = $('game-grid'), rackEl = $('tile-rack'), themeBtn = $('btn-theme');
 
 const buildValueGrid = () => new Map([...state.grid].map(([pos, id]) => [pos, state.tiles.get(id)]));
 
@@ -93,7 +81,7 @@ const runValidation = () => {
     updateTileStates(gridEl, state.validation.validPositions, state.validation.blockPositions, state.validation.impossiblePositions);
 
     const remaining = calcRemainingTiles(state, state.validation.validPositions);
-    if (!state.hand.size && state.validation.valid) return handleVictory();
+    if (!state.hand.size && remaining === 0 && state.validation.valid) return handleVictory();
 
     updateRemainingCounter(remaining);
 };
@@ -154,12 +142,30 @@ const newGame = () => {
     updateRemainingCounter(state.tiles.size);
 };
 
-const init = () => {
-    loadTheme();
-    initInteractions({ gridEl, rackEl, onTilePlaced: placeTile, onTileReturned: removeTile, getTileAt, swapTiles, createCellParticleBurst });
+let cleanupFns = [];
+
+const disposeGame = () => {
+    cleanupFns.forEach(fn => fn && fn());
+    cleanupFns = [];
+};
+
+const initGame = () => {
+    disposeGame(); // Ensure clean state
+
+    gridEl = $('game-grid');
+    rackEl = $('tile-rack');
+    themeBtn = $('btn-theme');
+
+    initTheme();
+    const cleanupInteractions = initInteractions({ gridEl, rackEl, onTilePlaced: placeTile, onTileReturned: removeTile, getTileAt, swapTiles, createCellParticleBurst });
+    if (cleanupInteractions) cleanupFns.push(cleanupInteractions);
+
     initToolbar({ state, rackEl, onScatter: scatterToBoard, onReturnAll: returnAllToHand });
-    initSelection({ gridEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
-    themeBtn.addEventListener('click', cycleTheme);
+
+    const selection = initSelection({ gridEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
+    if (selection && selection.dispose) cleanupFns.push(selection.dispose);
+
+    themeBtn.addEventListener('click', toggleTheme);
 
     let resizeTimer;
     const resizeObserver = new ResizeObserver(() => {
@@ -168,10 +174,20 @@ const init = () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => document.body.classList.remove('is-remodeling'), 100);
     });
-    resizeObserver.observe(document.body);
+    // Delay observer to avoid triggering "is-remodeling" during page transition (400ms)
+    setTimeout(() => resizeObserver.observe(document.body), 500);
+    cleanupFns.push(() => {
+        resizeObserver.disconnect();
+        document.body.classList.remove('is-remodeling');
+    });
 
-    initRackTransition(rackEl);
+    const rackObserver = initRackTransition(rackEl);
+    if (rackObserver) cleanupFns.push(() => rackObserver.disconnect());
+
+    initParticleBurstSystem(gridEl);
+    cleanupFns.push(cleanupParticleBurstSystem);
+
     newGame();
 };
 
-document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
+export { initGame, disposeGame };

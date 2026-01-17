@@ -230,5 +230,11 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
 
     document.addEventListener('click', onDocumentClick);
     gridEl.addEventListener('pointerdown', onGridDown);
-    return { clearSelection };
+    return {
+        clearSelection,
+        dispose: () => {
+            document.removeEventListener('click', onDocumentClick);
+            clearSelection();
+        }
+    };
 };
