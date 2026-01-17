@@ -147,6 +147,7 @@ let cleanupFns = [];
 const disposeGame = () => {
     cleanupFns.forEach(fn => fn && fn());
     cleanupFns = [];
+    particleBurstInitialized = false;
 };
 
 const initGame = () => {

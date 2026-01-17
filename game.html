@@ -95,10 +95,10 @@
 <script type="module">
     import { initGame } from './js/app.js';
 
-    // Wire up Home button to Router
     document.getElementById('btn-home').addEventListener('click', () => {
         Router('home.html');
     });
 
     initGame();
+    window.__pageReady = true;
 </script>

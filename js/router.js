@@ -39,8 +39,15 @@ const Router = async (path, pop = false) => {
             else script.textContent = oldScript.textContent;
             if (oldScript.type) script.type = oldScript.type;
             document.body.appendChild(script);
-            script.remove(); // Clean up script tag
+            script.remove();
         });
+
+        // Wait for page scripts to finish initializing
+        await new Promise(resolve => {
+            const check = () => window.__pageReady ? resolve() : requestAnimationFrame(check);
+            check();
+        });
+        delete window.__pageReady;
 
         if (oldPage) {
             // Force reflow
@@ -48,26 +55,19 @@ const Router = async (path, pop = false) => {
 
             requestAnimationFrame(() => {
                 if (isGame) {
-                    // Move Stack UP
                     newPage.classList.remove('slide-enter-from-bottom');
                     newPage.classList.add('slide-center');
-
-                    // Old (Home) goes UP out of view
                     oldPage.classList.add('slide-exit-to-top');
                 } else {
-                    // Move Stack DOWN
                     newPage.classList.remove('slide-enter-from-top');
                     newPage.classList.add('slide-center');
-
-                    // Old (Game) goes DOWN out of view
                     oldPage.classList.add('slide-exit-to-bottom');
                 }
 
                 setTimeout(() => {
                     oldPage.remove();
-                    // Ensure final state is clean
                     newPage.classList.remove('slide-center');
-                }, 600); // 600ms match CSS
+                }, 600);
             });
         }
 

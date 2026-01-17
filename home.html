@@ -1,8 +1,8 @@
 <div class="home-container">
     <div class="app-toolbar">
         <button aria-label="Toggle theme" class="icon-btn" id="home-btn-theme">
-            <svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                 viewBox="0 0 24 24" width="20">
+            <svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
+                stroke-width="1.5" viewBox="0 0 24 24" width="20">
                 <circle cx="12" cy="12" r="5"></circle>
                 <line x1="12" x2="12" y1="1" y2="3"></line>
                 <line x1="12" x2="12" y1="21" y2="23"></line>
@@ -62,7 +62,8 @@
     </div>
 </div>
 <script type="module">
-    import {initHome} from './js/home.js';
+    import { initHome } from './js/home.js';
 
     initHome();
+    window.__pageReady = true;
 </script>
