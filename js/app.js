@@ -129,7 +129,16 @@ const returnAllToHand = () => {
 };
 
 let particleBurstInitialized = false;
+
+const loadSettings = () => {
+    const diff = sessionStorage.getItem('rummigrams_difficulty');
+    const grid = sessionStorage.getItem('rummigrams_gridSize');
+    if (diff) state.level.difficulty = parseInt(diff, 10);
+    if (grid) state.level.gridSize = parseInt(grid, 10);
+};
+
 const newGame = () => {
+    loadSettings();
     state.grid.clear(); state.tiles.clear(); state.hand.clear();
     state.validation = null; state.isVictory = false;
 

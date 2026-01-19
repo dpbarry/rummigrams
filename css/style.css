@@ -16,9 +16,9 @@
   --accent-soft: hsl(var(--accent-h) 55% 55% / 0.12);
   --accent-glow: hsl(var(--accent-h) 75% 55% / 0.4);
 
-  --valid: hsl(150 45% 40%);
-  --valid-glow: hsl(150 55% 45% / 0.4);
-  --invalid: hsl(5 60% 55%);
+  --valid: hsl(160 35% 38%);
+  --valid-glow: hsl(160 40% 41% / 0.4);
+  --invalid: hsl(355 45% 45%);
   --warning: hsl(42 80% 50%);
 
   --tile-bg: hsl(270 40% 99%);
@@ -54,9 +54,9 @@
   --accent-soft: hsl(var(--accent-h) 50% 65% / 0.15);
   --accent-glow: hsl(var(--accent-h) 60% 65% / 0.3);
 
-  --valid: hsl(150 50% 52%);
-  --valid-glow: hsl(150 55% 50% / 0.35);
-  --invalid: hsl(5 60% 58%);
+  --valid: hsl(160 40% 45%);
+  --valid-glow: hsl(160 45% 48% / 0.35);
+  --invalid: hsl(355 50% 52%);
   --warning: hsl(42 70% 58%);
 
   --tile-bg: hsl(270 18% 12%);
@@ -1081,8 +1081,41 @@ body {
   pointer-events: none;
   z-index: 2;
   transition: transform var(--duration-fast) var(--ease-out-back),
-    box-shadow var(--duration-fast);
+    box-shadow var(--duration-fast),
+    left 0.1s linear;
+  /* Smooth follow during drag */
   box-shadow: 0 2px 8px hsl(0 0% 0% / 0.12);
+}
+
+.slider-control.compact:active .slider-thumb {
+  transition: none;
+  /* Instant follow when dragging */
+}
+
+.slider-notches {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.slider-notch {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 1px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: height var(--duration-fast);
+}
+
+.slider-control.compact:hover .slider-notch {
+  height: 10px;
 }
 
 .slider-control.compact:hover .slider-thumb,
@@ -1139,15 +1172,20 @@ body {
   position: absolute;
   display: grid;
   place-items: center;
-  background: var(--bg-elevated);
-  border: 1px solid var(--text-muted);
+  background: var(--tile-bg);
+  border: 1.5px solid var(--tile-border);
   border-radius: 8px;
   font-family: var(--font-display);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   transform-style: preserve-3d;
   transition: transform 0.12s ease-out;
   will-change: transform;
   overflow: hidden;
+  box-shadow: 0 2px 6px hsl(270 30% 50% / 0.12);
+}
+
+[data-theme="dark"] .parallax-tile {
+  box-shadow: 0 2px 8px hsl(270 30% 5% / 0.4);
 }
 
 .parallax-tile::before {

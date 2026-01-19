@@ -39,19 +39,110 @@ export const initHome = () => {
         };
     }
 
-    // Initialize Sliders
-    const sliders = document.querySelectorAll('.slider-control input[type="range"]');
-    sliders.forEach(slider => {
-        const updateValue = () => {
-            const min = parseFloat(slider.min) || 0;
-            const max = parseFloat(slider.max) || 100;
-            const val = parseFloat(slider.value) || 0;
-            const percentage = ((val - min) / (max - min)) * 100;
-            slider.style.setProperty('--value', `${percentage}%`);
+    // Slider Configurations
+    const SLIDER_CONFIG = {
+        difficulty: {
+            notches: [1, 2, 3, 4, 5],
+            labels: ['Zen', 'Easy', 'Normal', 'Hard', 'Expert'],
+            values: [1, 3, 5, 7, 10],
+            storageKey: 'rummigrams_difficulty'
+        },
+        gridSize: {
+            notches: [0, 1, 2],
+            labels: ['Small', 'Medium', 'Large'],
+            values: [5, 6, 7],
+            storageKey: 'rummigrams_gridSize'
+        }
+    };
+
+    const initSlider = (slider, config, displayEl) => {
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+
+        // Create visual notches
+        const track = slider.parentElement.querySelector('.slider-track');
+        if (track) {
+            let notchContainer = slider.parentElement.querySelector('.slider-notches');
+            if (!notchContainer) {
+                notchContainer = document.createElement('div');
+                notchContainer.className = 'slider-notches';
+                track.appendChild(notchContainer);
+            }
+            notchContainer.innerHTML = '';
+            config.notches.forEach(val => {
+                const pct = ((val - min) / (max - min)) * 100;
+                const notch = document.createElement('div');
+                notch.className = 'slider-notch';
+                notch.style.left = `${pct}%`;
+                notchContainer.appendChild(notch);
+            });
+        }
+
+        const snapToNotch = val => {
+            let closest = config.notches[0];
+            let minDist = Infinity;
+            for (const notch of config.notches) {
+                const dist = Math.abs(val - notch);
+                if (dist < minDist) { minDist = dist; closest = notch; }
+            }
+            return closest;
         };
-        slider.addEventListener('input', updateValue);
-        updateValue(); // Init
-    });
+
+        const updateVisuals = (val, snappedVal) => {
+            const percentage = ((val - min) / (max - min)) * 100;
+            slider.parentElement.style.setProperty('--value', `${percentage}%`);
+
+            const idx = config.notches.indexOf(snappedVal);
+            if (displayEl && idx >= 0) displayEl.textContent = config.labels[idx];
+        };
+
+        const onInput = () => {
+            const val = parseFloat(slider.value);
+            const snapped = snapToNotch(val);
+            updateVisuals(val, snapped);
+        };
+
+        const onChange = (save = true) => {
+            const val = parseFloat(slider.value);
+            const snapped = snapToNotch(val);
+            slider.value = snapped; // Force snap on release
+            updateVisuals(snapped, snapped);
+
+            if (save) {
+                const idx = config.notches.indexOf(snapped);
+                const storeVal = config.values ? config.values[idx] : snapped;
+                sessionStorage.setItem(config.storageKey, storeVal);
+            }
+        };
+
+        slider.addEventListener('input', onInput);
+        slider.addEventListener('change', () => onChange(true));
+
+        // Load saved or use default
+        const saved = sessionStorage.getItem(config.storageKey);
+        if (saved !== null) {
+            const savedNum = parseFloat(saved);
+            const idx = config.values ? config.values.indexOf(savedNum) : config.notches.indexOf(savedNum);
+            if (idx >= 0) {
+                slider.value = config.notches[idx];
+                onChange(false);
+            } else {
+                onChange(true);
+            }
+        } else {
+            onChange(true);
+        }
+    };
+
+    // Initialize difficulty slider
+    const diffSlider = document.querySelector('.compact-setting:nth-child(1) input[type="range"]');
+    const diffDisplay = document.querySelector('.compact-setting:nth-child(1) .setting-value-display');
+    if (diffSlider) initSlider(diffSlider, SLIDER_CONFIG.difficulty, diffDisplay);
+
+    // Initialize grid size slider
+    const gridSlider = document.querySelector('.compact-setting:nth-child(2) input[type="range"]');
+    const gridDisplay = document.querySelector('.compact-setting:nth-child(2) .setting-value-display');
+    if (gridSlider) initSlider(gridSlider, SLIDER_CONFIG.gridSize, gridDisplay);
 };
 
 const initParallaxTiles = () => {
