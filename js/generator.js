@@ -197,6 +197,53 @@ const generatePuzzleAttempt = params => {
     return { grid, tiles: Array.from(grid.values()) };
 };
 
+const isSolvable = tiles => {
+    if (tiles.length === 0) return true;
+    
+    const counts = new Map();
+    tiles.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
+    
+    const solve = remaining => {
+        if (remaining.size === 0) return true;
+        
+        const values = Array.from(remaining.keys()).sort((a, b) => a - b);
+        const minVal = values[0];
+        const minCount = remaining.get(minVal);
+        
+        for (let setSize = 3; setSize <= minCount; setSize++) {
+            const next = new Map(remaining);
+            next.set(minVal, minCount - setSize);
+            if (next.get(minVal) === 0) next.delete(minVal);
+            if (solve(next)) return true;
+        }
+        
+        let maxRunLen = 1;
+        while (remaining.has(minVal + maxRunLen)) maxRunLen++;
+        
+        for (let runLen = 3; runLen <= maxRunLen; runLen++) {
+            const next = new Map(remaining);
+            let valid = true;
+            
+            for (let i = 0; i < runLen; i++) {
+                const val = minVal + i;
+                if (!remaining.has(val)) {
+                    valid = false;
+                    break;
+                }
+                const newCount = remaining.get(val) - 1;
+                if (newCount > 0) next.set(val, newCount);
+                else next.delete(val);
+            }
+            
+            if (valid && solve(next)) return true;
+        }
+        
+        return false;
+    };
+    
+    return solve(counts);
+};
+
 const meetsQuality = (tiles, targetTiles, params) => {
     const counts = new Map();
     tiles.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
@@ -206,11 +253,9 @@ const meetsQuality = (tiles, targetTiles, params) => {
     const maxAllowed = params.maxPerValue + 1;
     const minUnique = Math.max(3, Math.ceil(targetTiles / 6));
 
-    // Quality check: Ensure we're within striking distance of target
-    // For Expert (high fill), be strict. For Zen, be loose.
     const threshold = params.compactness > 0.5 ? 0.85 : 0.70;
 
-    return tiles.length >= targetTiles * threshold && maxCount <= maxAllowed && uniqueValues >= minUnique;
+    return tiles.length >= targetTiles * threshold && maxCount <= maxAllowed && uniqueValues >= minUnique && isSolvable(tiles);
 };
 
 export const generatePuzzle = (opts = {}) => {
@@ -218,36 +263,50 @@ export const generatePuzzle = (opts = {}) => {
     const gridSize = opts.gridSize || 6;
     const params = calcDifficultyParams(difficulty, gridSize);
 
-    let bestResult = null;
-    let maxTiles = -1;
+    let bestSolvable = null;
+    let bestAny = null;
+    let maxSolvableTiles = -1;
+    let maxAnyTiles = -1;
 
-    for (let attempt = 0; attempt < 100; attempt++) {
+    for (let attempt = 0; attempt < 200; attempt++) {
         const result = generatePuzzleAttempt(params);
         if (result) {
             const tileCount = result.tiles.length;
+            const solvable = isSolvable(result.tiles);
 
-            // Keep track of the best result found so far
-            if (tileCount > maxTiles) {
-                maxTiles = tileCount;
-                bestResult = result;
+            if (solvable && tileCount > maxSolvableTiles) {
+                maxSolvableTiles = tileCount;
+                bestSolvable = result;
             }
 
-            // If we meet the target quality, return immediately
+            if (tileCount > maxAnyTiles) {
+                maxAnyTiles = tileCount;
+                bestAny = result;
+            }
+
             if (meetsQuality(result.tiles, params.targetTiles, params)) {
                 return result;
             }
         }
     }
 
-    // Return the best result found instead of a simplified fallback
-    if (bestResult && bestResult.tiles.length >= 8) {
-        return bestResult;
+    if (bestSolvable && bestSolvable.tiles.length >= 9) {
+        return bestSolvable;
     }
 
-    // Last resort fallback only if everything failed miserably
-    const relaxed = { ...params, targetTiles: Math.floor(params.targetTiles * 0.7) };
-    const fallback = generatePuzzleAttempt(relaxed);
-    return fallback || { grid: new Map(), tiles: [] };
+    if (bestAny && bestAny.tiles.length >= 8 && isSolvable(bestAny.tiles)) {
+        return bestAny;
+    }
+
+    const relaxed = { ...params, targetTiles: Math.floor(params.targetTiles * 0.6) };
+    for (let attempt = 0; attempt < 50; attempt++) {
+        const result = generatePuzzleAttempt(relaxed);
+        if (result && isSolvable(result.tiles)) {
+            return result;
+        }
+    }
+
+    return { grid: new Map(), tiles: [] };
 };
 
 export const generateLevel = (opts = {}) => {

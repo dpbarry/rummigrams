@@ -48,9 +48,9 @@ export const initHome = () => {
             storageKey: 'rummigrams_difficulty'
         },
         gridSize: {
-            notches: [0, 1, 2],
-            labels: ['Small', 'Medium', 'Large'],
-            values: [5, 6, 7],
+            notches: [4, 5, 6, 7, 8],
+            labels: ['4×4', '5×5', '6×6', '7×7', '8×8'],
+            values: [4, 5, 6, 7, 8],
             storageKey: 'rummigrams_gridSize'
         }
     };
