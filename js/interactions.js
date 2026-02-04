@@ -123,7 +123,7 @@ export const initInteractions = ({ gridEl, rackEl, onTilePlaced, onTileReturned,
 
             if (occupantId) {
                 swapTiles(draggedTile.id, originalPos, occupantId, x, y);
-                createCellParticleBurst(cell);
+                if (!originalPos) createCellParticleBurst(cell);
                 triggerSnap(draggedTile);
                 triggerSnap(document.getElementById(occupantId));
             } else if (!isSamePos(x, y)) {

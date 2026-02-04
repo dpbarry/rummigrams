@@ -3,7 +3,7 @@ export const themes = ['light', 'dark'];
 export const toggleTheme = () => {
     document.body.classList.add('is-remodeling');
     const html = document.documentElement;
-    const current = html.dataset.theme || 'light';
+    const current = html.dataset.theme || 'dark';
     const next = themes[(themes.indexOf(current) + 1) % themes.length];
 
     html.dataset.theme = next;

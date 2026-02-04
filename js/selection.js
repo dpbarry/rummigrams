@@ -17,6 +17,7 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
 
     const $ = id => document.getElementById(id);
     const getCell = (x, y) => gridEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+    const gameContainer = gridEl.closest('.game-container') || gridEl;
 
     const clearSelection = () => {
         selectedIds.forEach(id => $(id)?.classList.remove('tile--selected', 'tile--dragging', 'tile--invalid-drop'));
@@ -229,11 +230,12 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
     };
 
     document.addEventListener('click', onDocumentClick);
-    gridEl.addEventListener('pointerdown', onGridDown);
+    gameContainer.addEventListener('pointerdown', onGridDown);
     return {
         clearSelection,
         dispose: () => {
             document.removeEventListener('click', onDocumentClick);
+            gameContainer.removeEventListener('pointerdown', onGridDown);
             clearSelection();
         }
     };

@@ -88,8 +88,12 @@ export const initParticleBurstSystem = gridEl => particleBurstSystem.attach(grid
 export const cleanupParticleBurstSystem = () => particleBurstSystem.destroy();
 
 export const createCellParticleBurst = cell => {
-    const x = cell.offsetLeft + cell.offsetWidth / 2;
-    const y = cell.offsetTop + cell.offsetHeight / 2;
+    const grid = cell.closest('.game-grid');
+    if (!grid) return;
+    const gridRect = grid.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    const x = cellRect.left - gridRect.left + cellRect.width / 2;
+    const y = cellRect.top - gridRect.top + cellRect.height / 2;
     particleBurstSystem.emit(x, y);
 };
 export const triggerVictory = gridEl => {

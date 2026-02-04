@@ -8,6 +8,7 @@ import {
 import { initInteractions } from './interactions.js';
 import { initToolbar, calcRemainingTiles, updateRemainingCounter } from './toolbar.js';
 import { initSelection } from './selection.js';
+import { initScrollFade } from './scrollfade.js';
 
 const state = {
     grid: new Map(),
@@ -193,6 +194,10 @@ const initGame = () => {
 
     const rackObserver = initRackTransition(rackEl);
     if (rackObserver) cleanupFns.push(() => rackObserver.disconnect());
+
+    const rackContainer = rackEl.closest('.rack-container');
+    const cleanupScrollFade = rackContainer && initScrollFade(rackContainer);
+    if (cleanupScrollFade) cleanupFns.push(cleanupScrollFade);
 
     initParticleBurstSystem(gridEl);
     cleanupFns.push(cleanupParticleBurstSystem);

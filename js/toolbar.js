@@ -72,5 +72,5 @@ export const updateRemainingCounter = (count, isVictory = false) => {
 
     countEl.textContent = count;
     countEl.dataset.state = isVictory ? 'victory' : count === 0 ? 'valid' : '';
-    labelEl.textContent = count === 1 ? 'tile remaining' : 'tiles remaining';
+    labelEl.textContent = "remaining";
 };

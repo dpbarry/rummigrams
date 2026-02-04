@@ -86,16 +86,16 @@ class ParticleBurstSystem {
         const style = getComputedStyle(document.documentElement);
         const hue = parseInt(style.getPropertyValue('--accent-h')) || 260;
         const tileSize = parseFloat(style.getPropertyValue('--tile-size')) || 40;
-        const spawnRadius = tileSize * 0.45;
+        const edgeRadius = tileSize * 0.38;
 
-        const count = 8 + (Math.random() * 4 | 0);
+        const count = 7 + (Math.random() * 3 | 0);
         for (let i = 0; i < count; i++) {
             const angle = rand(0, TAU);
             const [r, g, b] = hslToRgb(hue + rand(-12, 12), rand(50, 70), rand(65, 80));
             this.particles.push(new Particle(
-                x + Math.cos(angle) * spawnRadius,
-                y + Math.sin(angle) * spawnRadius,
-                angle, rand(1.5, 3.2), rand(1.2, 2.8), r, g, b
+                x + Math.cos(angle) * edgeRadius,
+                y + Math.sin(angle) * edgeRadius,
+                angle, rand(1.5, 3.2), rand(1, 2), r, g, b
             ));
         }
 

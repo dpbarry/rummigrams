@@ -6,6 +6,8 @@
   --bg-surface: hsl(270 20% 89%);
   --bg-glass: hsl(270 30% 96% / 0.85);
   --bg-soft: hsl(270 40% 90%);
+  --bg-contrast: hsl(270 20% 75%);
+  --bg-strong: hsl(270 24% 70%);
 
   --text-primary: hsl(270 40% 12%);
   --text-secondary: hsl(270 15% 35%);
@@ -17,13 +19,13 @@
   --accent-soft: hsl(var(--accent-h) 55% 55% / 0.12);
   --accent-glow: hsl(var(--accent-h) 75% 55% / 0.4);
 
-  --valid: hsl(160 35% 38%);
+  --valid: hsl(160 35% 45%);
   --valid-glow: hsl(160 40% 41% / 0.4);
   --invalid: hsl(355 45% 45%);
   --warning: hsl(42 80% 50%);
 
   --tile-bg: hsl(270 40% 99%);
-  --tile-border: hsl(270 20% 78%);
+  --tile-border: hsl(270 20% 81%);
   --tile-shadow: hsl(270 30% 88% / 0.15);
   --tile-number: hsl(270 40% 15%);
 
@@ -45,6 +47,8 @@
   --bg-surface: hsl(270 18% 12%);
   --bg-soft: hsl(270 40% 15%);
   --bg-glass: hsl(270 20% 8% / 0.9);
+  --bg-contrast: hsl(270 20% 20%);
+  --bg-strong: hsl(270 24% 24%);
 
   --text-primary: hsl(270 30% 94%);
   --text-secondary: hsl(270 10% 65%);
@@ -56,13 +60,13 @@
   --accent-soft: hsl(var(--accent-h) 50% 65% / 0.15);
   --accent-glow: hsl(var(--accent-h) 60% 65% / 0.3);
 
-  --valid: hsl(160 40% 45%);
+  --valid: hsl(160 40% 48%);
   --valid-glow: hsl(160 45% 48% / 0.35);
-  --invalid: hsl(355 50% 52%);
+  --invalid: hsl(355 50% 48%);
   --warning: hsl(42 70% 58%);
 
   --tile-bg: hsl(270 18% 12%);
-  --tile-border: hsl(270 15% 18%);
+  --tile-border: hsl(270 15% 20%);
   --tile-shadow: hsl(270 30% 2% / 0.5);
   --tile-number: hsl(270 25% 92%);
 
@@ -174,7 +178,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-sm) var(--space-xl);
+  padding: var(--space-sm) var(--space-sm);
   background: var(--bg-glass);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
@@ -289,8 +293,10 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-sm) var(--space-xl);
+  padding-right: calc(var(--space-xl) - 0.5rem);
   background: var(--bg-elevated);
   border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
   gap: var(--space-lg);
 }
 
@@ -410,17 +416,52 @@ body {
   box-shadow: 0 6px 16px hsl(0 0% 0% / 0.12);
 }
 
+.scroll-fade-wrap {
+  grid-area: rack;
+  position: relative;
+  max-height: 24vh;
+}
+
+.scroll-fade-wrap > .rack-container {
+  grid-area: unset;
+  max-height: 100%;
+  height: 100%;
+}
+
 .rack-container {
   grid-area: rack;
   padding: var(--space-md) var(--space-xl) var(--space-lg);
   background: var(--bg-elevated);
-  border-top: 1px solid var(--divider);
   position: relative;
   max-height: 24vh;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
+.scroll-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2rem;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 20;
+  transition: opacity 80ms ease-out;
+}
+
+.scroll-fade--top {
+  top: 0;
+  background: linear-gradient(to bottom, var(--bg-elevated) 0%, transparent 100%);
+}
+
+.scroll-fade--bottom {
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg-elevated) 0%, transparent 100%);
+}
+
+.scroll-fade.visible {
+  opacity: 1;
+}
 
 .tile-rack {
   display: flex;
@@ -438,7 +479,7 @@ body {
   width: var(--tile-size);
   height: var(--tile-size);
   background: var(--tile-bg);
-  border: 1.5px solid var(--tile-border);
+  border: 1px solid var(--tile-border);
   border-radius: var(--tile-radius);
   cursor: grab;
   touch-action: none;
@@ -669,13 +710,13 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--divider);
+  background: var(--bg-contrast);
   border-radius: 3px;
 }
 
 @media (pointer: fine) and (hover: hover) {
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
+    background: var(--bg-strong);
   }
 }
 
@@ -689,7 +730,7 @@ body {
     --tile-w-limit: calc((100vw - 2rem) / 8);
 
     --tile-size: clamp(1.6rem, min(var(--tile-w-limit), var(--tile-h-limit)), 3rem);
-    --grid-gap: clamp(2px, 0.4vmin, 6px);
+    --grid-gap: clamp(4px, 0.85vmin, 6px);
   }
 
   .rack-container {
