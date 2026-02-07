@@ -371,14 +371,18 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
     // Smart placement: find N free cells starting from cursor position, spreading outward
     const findSpreadCells = (startX, startY, count, gridSize, occupiedSet) => {
+        // Clamp to valid grid bounds
+        const clampedX = Math.max(0, Math.min(gridSize - 1, startX));
+        const clampedY = Math.max(0, Math.min(gridSize - 1, startY));
+
         const cells = [];
         const visited = new Set();
-        const queue = [[startX, startY]];
-        visited.add(`${startX},${startY}`);
+        const queue = [[clampedX, clampedY]];
+        visited.add(`${clampedX},${clampedY}`);
 
         while (queue.length > 0 && cells.length < count) {
             const [x, y] = queue.shift();
-            if (x >= 0 && x < gridSize && y >= 0 && y < gridSize && !occupiedSet.has(`${x},${y}`)) {
+            if (!occupiedSet.has(`${x},${y}`)) {
                 cells.push({ x, y });
             }
             // Add neighbors (4-directional spread)
@@ -392,6 +396,27 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             }
         }
         return cells;
+    };
+
+    // Calculate cursor grid position with generous margin (allows hovering near edges)
+    const getCursorGridPos = (e, gridRect, cellSize) => {
+        const margin = cellSize.w * 0.5; // Half a cell margin
+        const expandedLeft = gridRect.left - margin;
+        const expandedTop = gridRect.top - margin;
+        const expandedRight = gridRect.right + margin;
+        const expandedBottom = gridRect.bottom + margin;
+
+        // Check if within generous bounds
+        if (e.clientX < expandedLeft || e.clientX > expandedRight ||
+            e.clientY < expandedTop || e.clientY > expandedBottom) {
+            return null;
+        }
+
+        // Calculate raw cell position (can be negative or beyond grid)
+        const rawX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
+        const rawY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
+
+        return { x: rawX, y: rawY };
     };
 
     const onDragMove = e => {
@@ -408,16 +433,14 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         } else {
             // Rack -> Grid: show preview of spread placement
             const gridRect = gridEl.getBoundingClientRect();
-            const cursorX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
-            const cursorY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
+            const cursorPos = getCursorGridPos(e, gridRect, cellSize);
 
-            // Check if cursor is over the grid
-            if (cursorX < 0 || cursorX >= state.level.gridSize || cursorY < 0 || cursorY >= state.level.gridSize) {
+            if (!cursorPos) {
                 setInvalidDropState(true);
                 return;
             }
 
-            const spreadCells = findSpreadCells(cursorX, cursorY, selectedIds.size, state.level.gridSize, state.grid);
+            const spreadCells = findSpreadCells(cursorPos.x, cursorPos.y, selectedIds.size, state.level.gridSize, state.grid);
             const valid = spreadCells.length === selectedIds.size;
             setInvalidDropState(!valid);
 
@@ -444,9 +467,14 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
         const gridRect = gridEl.getBoundingClientRect();
         const rackRect = document.querySelector('.rack-container').getBoundingClientRect();
-        const isOutsideGrid = e.clientX < gridRect.left || e.clientX > gridRect.right ||
-            e.clientY < gridRect.top || e.clientY > gridRect.bottom;
+        const cellSize = getCellSize(gridEl);
         const isOverRack = e.clientY > rackRect.top;
+
+        // For rack->grid drops, use generous positioning
+        const cursorPos = activeContainer === 'rack' ? getCursorGridPos(e, gridRect, cellSize) : null;
+        const isOutsideGrid = activeContainer === 'rack'
+            ? (!cursorPos && !isOverRack)
+            : (e.clientX < gridRect.left || e.clientX > gridRect.right || e.clientY < gridRect.top || e.clientY > gridRect.bottom);
 
         if (isOutsideGrid || isOverRack) {
             if (activeContainer === 'grid') {
@@ -473,8 +501,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             return;
         }
 
-        const cellSize = getCellSize(gridEl);
-
         let updates = null;
 
         if (activeContainer === 'grid') {
@@ -489,12 +515,8 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             const res = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
             if (res.valid) updates = res.updates;
         } else {
-            // From Rack: use smart spread placement
-            const gridRect = gridEl.getBoundingClientRect();
-            const cursorX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
-            const cursorY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
-
-            const spreadCells = findSpreadCells(cursorX, cursorY, selectedIds.size, state.level.gridSize, state.grid);
+            // From Rack: use smart spread placement with generous cursor position
+            const spreadCells = findSpreadCells(cursorPos.x, cursorPos.y, selectedIds.size, state.level.gridSize, state.grid);
             if (spreadCells.length === selectedIds.size) {
                 const idsArray = [...selectedIds];
                 updates = spreadCells.map((c, i) => ({ id: idsArray[i], oldX: -1, oldY: -1, newX: c.x, newY: c.y }));
@@ -510,6 +532,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         updates.forEach(u => state.grid.delete(`${u.oldX},${u.oldY}`));
         updates.forEach(u => {
             state.grid.set(`${u.newX},${u.newY}`, u.id);
+            state.hand.delete(u.id);
             const el = $(u.id);
             if (el) {
                 // Reset fixed positioning before snapping to grid
