@@ -66,6 +66,9 @@ export const initInteractions = ({ gridEl, rackEl, onTilePlaced, onTileReturned,
         const tile = e.target.closest('.tile');
         if (!tile || tile.classList.contains('tile--selected')) return;
 
+        // Ignore placed tiles in magnet mode unless explicitly forced by selection.js
+        if (tile.classList.contains('tile--placed') && window.__magnetModeActive && !e.forceDrag) return;
+
         e.preventDefault();
         draggedTile = tile;
         originalPos = tile.dataset.gridX !== undefined

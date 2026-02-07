@@ -1,6 +1,10 @@
 const parser = new DOMParser();
+let isTransitioning = false;
 
 const Router = async (path, pop = false) => {
+    if (isTransitioning) return;
+    isTransitioning = true;
+
     if (!pop) history.pushState({ loc: path }, "", "#" + path);
 
     try {
@@ -22,17 +26,14 @@ const Router = async (path, pop = false) => {
 
         if (oldPage) {
             if (isGame) {
-                // Going to Game: Content moves UP
                 newPage.classList.add('slide-enter-from-bottom');
             } else {
-                // Going Home: Content moves DOWN
                 newPage.classList.add('slide-enter-from-top');
             }
         }
 
         document.body.appendChild(newPage);
 
-        // Execute scripts immediately so they attach listeners
         newPage.querySelectorAll('script').forEach(oldScript => {
             const script = document.createElement('script');
             if (oldScript.src) script.src = oldScript.src;
@@ -42,7 +43,6 @@ const Router = async (path, pop = false) => {
             script.remove();
         });
 
-        // Wait for page scripts to finish initializing
         await new Promise(resolve => {
             const check = () => window.__pageReady ? resolve() : requestAnimationFrame(check);
             check();
@@ -50,7 +50,6 @@ const Router = async (path, pop = false) => {
         delete window.__pageReady;
 
         if (oldPage) {
-            // Force reflow
             void newPage.offsetHeight;
 
             requestAnimationFrame(() => {
@@ -67,12 +66,16 @@ const Router = async (path, pop = false) => {
                 setTimeout(() => {
                     oldPage.remove();
                     newPage.classList.remove('slide-center');
+                    isTransitioning = false;
                 }, 600);
             });
+        } else {
+            isTransitioning = false;
         }
 
     } catch (err) {
         console.error('Router error:', err);
+        isTransitioning = false;
     }
 };
 
@@ -81,3 +84,4 @@ window.addEventListener("popstate", e => {
 });
 
 window.Router = Router;
+

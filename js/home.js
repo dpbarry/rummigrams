@@ -1,6 +1,26 @@
 import { toggleTheme, initTheme } from './theme.js';
+import { hasContinuableGame } from './storage.js';
 
 const $ = id => document.getElementById(id);
+
+// Fix click detection for buttons with scale animations
+const fixScaleClick = (btn, callback) => {
+    if (!btn) return;
+    let startRect = null;
+    const onDown = e => {
+        startRect = btn.getBoundingClientRect();
+        document.addEventListener('pointerup', onUp, { once: true });
+    };
+    const onUp = e => {
+        if (!startRect) return;
+        const { clientX: x, clientY: y } = e;
+        if (x >= startRect.left && x <= startRect.right && y >= startRect.top && y <= startRect.bottom) {
+            callback(e);
+        }
+        startRect = null;
+    };
+    btn.addEventListener('pointerdown', onDown);
+};
 
 export const initHome = () => {
     initTheme();
@@ -9,14 +29,30 @@ export const initHome = () => {
     const btnTheme = $('home-btn-theme');
     const btnCreate = $('home-btn-create');
     const btnStart = $('home-btn-start');
+    const btnContinue = $('home-btn-continue');
+
+    if (hasContinuableGame() && btnContinue) {
+        btnContinue.style.display = '';
+    }
 
     // Theme Toggle
-    if (btnTheme) {
-        btnTheme.onclick = (e) => {
-            e.stopPropagation();
-            toggleTheme();
-        };
-    }
+    fixScaleClick(btnTheme, (e) => {
+        e.stopPropagation();
+        toggleTheme();
+    });
+
+    // Info Dialog - scope to home container to avoid conflicts during page transitions
+    const homeContainer = document.querySelector('.home-container');
+    const btnInfo = $('home-btn-info');
+    const overlay = homeContainer?.querySelector('.info-dialog-overlay');
+    const closeBtn = homeContainer?.querySelector('.info-dialog-close');
+
+    const openDialog = () => overlay?.classList.add('open');
+    const closeDialog = () => overlay?.classList.remove('open');
+
+    fixScaleClick(btnInfo, openDialog);
+    fixScaleClick(closeBtn, closeDialog);
+    if (overlay) overlay.onclick = (e) => { if (e.target === overlay) closeDialog(); };
 
     // Solo Play Accordion
     // Solo Play Accordion (Removed in new layout)
@@ -26,6 +62,16 @@ export const initHome = () => {
     // Start Game
     if (btnStart) {
         btnStart.onclick = () => {
+            sessionStorage.setItem('rummigrams_new_game', 'true');
+            if (window.Router) {
+                window.Router('game.html');
+            }
+        };
+    }
+
+    if (btnContinue) {
+        btnContinue.onclick = () => {
+            sessionStorage.removeItem('rummigrams_new_game');
             if (window.Router) {
                 window.Router('game.html');
             }

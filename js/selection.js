@@ -3,54 +3,204 @@ import {
     snapTileToCell, moveTilesPixel
 } from './drag.js';
 
-export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
+export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate }) => {
     let selectedIds = new Set();
     let selectionRect = null;
     let isSelecting = false;
     let selStart = { x: 0, y: 0 };
     let justFinishedSelecting = false;
+    let preDragSelectedIds = new Set();
+    let magnetMode = false;
 
     let isDragging = false;
     let dragStart = { x: 0, y: 0 };
     let origGridPos = new Map();
     let origPixelPos = new Map();
+    let activeContainer = null; // 'grid' or 'rack'
 
     const $ = id => document.getElementById(id);
     const getCell = (x, y) => gridEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
     const gameContainer = gridEl.closest('.game-container') || gridEl;
 
+    const magnetBtn = document.getElementById('btn-magnet');
+
     const clearSelection = () => {
-        selectedIds.forEach(id => $(id)?.classList.remove('tile--selected', 'tile--dragging', 'tile--invalid-drop'));
+        selectedIds.forEach(id => {
+            const el = $(id);
+            if (el) el.classList.remove('tile--selected', 'tile--dragging', 'tile--invalid-drop');
+        });
         selectedIds = new Set();
         origGridPos.clear();
         origPixelPos.clear();
         selectionRect?.remove();
         selectionRect = null;
-        gridEl.removeEventListener('pointerdown', onDragStart);
+        activeContainer = null;
+        gameContainer.removeEventListener('pointerdown', onDragStart);
+        rackEl.removeEventListener('pointerdown', onDragStart);
     };
 
-    const onGridDown = e => {
+    const setMagnetMode = (active, shouldClearSelection = true) => {
+        magnetMode = active;
+        window.__magnetModeActive = active;
+        magnetBtn?.classList.toggle('tool-btn--active', active);
+        if (!active && shouldClearSelection) clearSelection();
+    };
+
+    window.__magnetModeActive = false;
+    magnetBtn?.addEventListener('click', () => setMagnetMode(!magnetMode));
+
+    let enabledByCtrl = false;
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Control' && !e.repeat && !magnetMode) {
+            setMagnetMode(true);
+            enabledByCtrl = true;
+        }
+    });
+
+    document.addEventListener('keyup', e => {
+        if (e.key === 'Control' && magnetMode && enabledByCtrl) {
+            setMagnetMode(false, false);
+            enabledByCtrl = false;
+        }
+    });
+
+    const toggleTileSelection = tile => {
+        const id = tile.id;
+        if (selectedIds.has(id)) {
+            selectedIds.delete(id);
+            tile.classList.remove('tile--selected');
+            if (!selectedIds.size) {
+                gameContainer.removeEventListener('pointerdown', onDragStart);
+                rackEl.removeEventListener('pointerdown', onDragStart);
+                activeContainer = null;
+            }
+        } else {
+            // Check if we are switching containers
+            const tileContainer = tile.closest('.game-grid') ? 'grid' : 'rack';
+            if (activeContainer && activeContainer !== tileContainer) {
+                clearSelection();
+            }
+            activeContainer = tileContainer;
+
+            selectedIds.add(id);
+            tile.classList.add('tile--selected');
+            if (selectedIds.size === 1) {
+                gameContainer.addEventListener('pointerdown', onDragStart);
+                rackEl.addEventListener('pointerdown', onDragStart);
+            }
+        }
+    };
+
+    let justFinishedDragging = false;
+
+    const DRAG_THRESHOLD = 6;
+
+    const onMagnetTileDown = e => {
+        const tile = e.target.closest('.tile');
+        if (!tile) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const startX = e.clientX, startY = e.clientY;
+        let moved = false;
+
+        const onMove = me => {
+            const dx = me.clientX - startX, dy = me.clientY - startY;
+            if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+                moved = true;
+                cleanup();
+
+                // Handover to interactions.js
+                const dragEvent = new PointerEvent('pointerdown', {
+                    bubbles: true, cancelable: true,
+                    clientX: startX, clientY: startY,
+                    pointerId: e.pointerId, pointerType: e.pointerType,
+                    isPrimary: e.isPrimary
+                });
+                dragEvent.forceDrag = true;
+                tile.dispatchEvent(dragEvent);
+            }
+        };
+
+        const onUp = () => {
+            cleanup();
+            if (!moved) toggleTileSelection(tile);
+        };
+
+        const cleanup = () => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        };
+
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    };
+
+    const onContainerDown = e => {
+        if (magnetMode && e.target.closest('.tile') && !e.forceDrag) {
+            onMagnetTileDown(e);
+        } else {
+            onSelectionStart(e);
+        }
+    };
+
+    gameContainer.addEventListener('pointerdown', onContainerDown, { capture: true });
+    rackEl.addEventListener('pointerdown', onContainerDown, { capture: true });
+
+    const onSelectionStart = e => {
         if (e.target.closest('.tile')) return;
+
+        // Determine container based on where the event occurred
+        const isInRack = rackEl.contains(e.target) || e.currentTarget === rackEl;
+        const container = isInRack ? 'rack' : 'grid';
+
+
         e.preventDefault();
         isSelecting = true;
         selStart = { x: e.clientX, y: e.clientY };
-        clearSelection();
+
+        // If clicking in a different container, clear previous selection immediately
+        if (activeContainer && activeContainer !== container) {
+            clearSelection();
+        }
+
+        activeContainer = container;
+
+        if (magnetMode) {
+            preDragSelectedIds = new Set(selectedIds);
+        } else {
+            clearSelection();
+            activeContainer = container; // Re-set after clear
+        }
 
         document.addEventListener('pointermove', onSelecting);
         document.addEventListener('pointerup', onSelectEnd);
     };
 
+    // onMagnetClick -> DELETE (logic moved to onMagnetTileDown)
+
     const onSelecting = e => {
         if (!isSelecting) return;
 
         if (!selectionRect) {
+            if (Math.abs(e.clientX - selStart.x) < DRAG_THRESHOLD && Math.abs(e.clientY - selStart.y) < DRAG_THRESHOLD) {
+                return;
+            }
             selectionRect = Object.assign(document.createElement('div'), { className: 'selection-rect' });
-            gridEl.appendChild(selectionRect);
+
+            // Append to the active container
+            if (activeContainer === 'grid') gridEl.appendChild(selectionRect);
+            else if (activeContainer === 'rack') rackEl.appendChild(selectionRect);
         }
 
-        const gridRect = gridEl.getBoundingClientRect();
-        const [x1, y1] = [selStart.x - gridRect.left, selStart.y - gridRect.top];
-        const [x2, y2] = [e.clientX - gridRect.left, e.clientY - gridRect.top];
+        const containerEl = activeContainer === 'grid' ? gridEl : rackEl;
+        const rect = containerEl.getBoundingClientRect();
+        const [x1, y1] = [selStart.x - rect.left, selStart.y - rect.top];
+        const [x2, y2] = [e.clientX - rect.left, e.clientY - rect.top];
+        // Clip to container bounds? CSS overflow hidden on rack might handle it, but valid point.
+        // For now, let it be drawn normally, CSS should clip it if container has overflow: hidden.
 
         Object.assign(selectionRect.style, {
             left: `${Math.min(x1, x2)}px`, top: `${Math.min(y1, y2)}px`,
@@ -60,8 +210,12 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         const [minX, maxX] = [Math.min(selStart.x, e.clientX), Math.max(selStart.x, e.clientX)];
         const [minY, maxY] = [Math.min(selStart.y, e.clientY), Math.max(selStart.y, e.clientY)];
 
+        // Select tiles in the active container only
+        const tileSelector = activeContainer === 'grid' ? '.tile--placed' : '.tile';
+        const tilesToCheck = containerEl.querySelectorAll(tileSelector);
+
         const nowSelected = new Set(
-            [...gridEl.querySelectorAll('.tile--placed')]
+            [...tilesToCheck]
                 .filter(tile => {
                     const r = tile.getBoundingClientRect();
                     const [cx, cy] = [r.left + r.width / 2, r.top + r.height / 2];
@@ -69,6 +223,10 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
                 })
                 .map(tile => tile.id)
         );
+
+        if (magnetMode) {
+            preDragSelectedIds.forEach(id => nowSelected.add(id));
+        }
 
         selectedIds.forEach(id => !nowSelected.has(id) && $(id)?.classList.remove('tile--selected'));
         nowSelected.forEach(id => $(id)?.classList.add('tile--selected'));
@@ -79,21 +237,34 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         document.removeEventListener('pointermove', onSelecting);
         document.removeEventListener('pointerup', onSelectEnd);
         isSelecting = false;
+
+        if (!selectionRect && magnetMode) {
+            clearSelection();
+        }
+
         selectionRect?.remove();
         selectionRect = null;
-        if (selectedIds.size) gridEl.addEventListener('pointerdown', onDragStart);
+        if (selectedIds.size) {
+            gameContainer.addEventListener('pointerdown', onDragStart);
+            rackEl.addEventListener('pointerdown', onDragStart);
+        }
         justFinishedSelecting = true;
         setTimeout(() => justFinishedSelecting = false, 100);
     };
 
     const onDragStart = e => {
         const tile = e.target.closest('.tile--selected');
-        if (!tile) { clearSelection(); return; }
+        if (!tile) {
+            if (!magnetMode) clearSelection();
+            return;
+        }
 
-        if (selectedIds.size === 1) {
+        if (selectedIds.size === 1 && !magnetMode) {
             tile.classList.remove('tile--selected');
             selectedIds.clear();
-            gridEl.removeEventListener('pointerdown', onDragStart);
+            gameContainer.removeEventListener('pointerdown', onDragStart);
+            rackEl.removeEventListener('pointerdown', onDragStart);
+            activeContainer = null;
             const newEvent = new PointerEvent('pointerdown', {
                 bubbles: true,
                 cancelable: true,
@@ -111,19 +282,71 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         isDragging = true;
         dragStart = { x: e.clientX, y: e.clientY };
 
+        try {
+            e.target.setPointerCapture(e.pointerId);
+        } catch (err) {
+            // Ignore if pointer capture fails
+        }
+
         origGridPos.clear();
         origPixelPos.clear();
+
+        const primaryTileId = tile.id;
 
         selectedIds.forEach(id => {
             const el = $(id);
             if (!el) return;
-            const pos = [...state.grid].find(([, tid]) => tid === id)?.[0];
-            if (!pos) return;
-            const [x, y] = pos.split(',').map(Number);
-            origGridPos.set(id, { x, y });
-            origPixelPos.set(id, { left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0 });
+
+            // Calculate current visual rect to maintain position when switching to fixed
+            const rect = el.getBoundingClientRect();
+
+            // Record initial visual position (fixed coordinates)
+            origPixelPos.set(id, { left: rect.left, top: rect.top });
+
+            if (activeContainer === 'grid') {
+                const pos = [...state.grid].find(([, tid]) => tid === id)?.[0];
+                if (pos) {
+                    const [x, y] = pos.split(',').map(Number);
+                    origGridPos.set(id, { x, y });
+                }
+            } else if (activeContainer === 'rack') {
+                // For rack items, calculate relative offsets from the primary tile
+                const primaryEl = $(primaryTileId);
+                const pRect = primaryEl.getBoundingClientRect();
+                const relX = rect.left - pRect.left;
+                const relY = rect.top - pRect.top;
+
+                origGridPos.set(id, { relX, relY, isRack: true });
+            }
+
+            // Reparent to body and set fixed position
+            el.style.position = 'fixed';
+            el.style.left = `${rect.left}px`;
+            el.style.top = `${rect.top}px`;
+            el.style.width = `${rect.width}px`;
+            el.style.height = `${rect.height}px`;
+            el.style.zIndex = '1000';
+            document.body.appendChild(el);
+
             el.classList.add('tile--dragging');
         });
+
+        // If dragging from rack, collapse tiles into a stack around the primary tile
+        if (activeContainer === 'rack' && selectedIds.size > 1) {
+            const primaryRect = tile.getBoundingClientRect();
+            const stackOffset = 8; // pixels offset per tile
+            let i = 0;
+            selectedIds.forEach(id => {
+                if (id === primaryTileId) return;
+                i++;
+                const el = $(id);
+                el.style.left = `${primaryRect.left + i * stackOffset}px`;
+                el.style.top = `${primaryRect.top - i * stackOffset}px`;
+                el.style.zIndex = `${1000 - i}`;
+                // Update origPixelPos to this stacked position for smooth dragging
+                origPixelPos.set(id, { left: primaryRect.left + i * stackOffset, top: primaryRect.top - i * stackOffset });
+            });
+        }
 
         document.addEventListener('pointermove', onDragMove);
         document.addEventListener('pointerup', onDragEnd);
@@ -136,30 +359,86 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         });
     };
 
+    const handleTargetResult = (valid, updates) => {
+        setInvalidDropState(!valid);
+        if (valid && updates) {
+            updates.forEach(u => {
+                const cell = getCell(u.newX, u.newY);
+                if (cell) cell.classList.add('grid-cell--valid-target');
+            });
+        }
+    };
+
+    // Smart placement: find N free cells starting from cursor position, spreading outward
+    const findSpreadCells = (startX, startY, count, gridSize, occupiedSet) => {
+        const cells = [];
+        const visited = new Set();
+        const queue = [[startX, startY]];
+        visited.add(`${startX},${startY}`);
+
+        while (queue.length > 0 && cells.length < count) {
+            const [x, y] = queue.shift();
+            if (x >= 0 && x < gridSize && y >= 0 && y < gridSize && !occupiedSet.has(`${x},${y}`)) {
+                cells.push({ x, y });
+            }
+            // Add neighbors (4-directional spread)
+            for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+                const nx = x + dx, ny = y + dy;
+                const key = `${nx},${ny}`;
+                if (!visited.has(key) && nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+                    visited.add(key);
+                    queue.push([nx, ny]);
+                }
+            }
+        }
+        return cells;
+    };
+
     const onDragMove = e => {
         if (!isDragging) return;
         const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
         moveTilesPixel(selectedIds, origPixelPos, dx, dy);
         clearCellHighlights(gridEl);
         const cellSize = getCellSize(gridEl);
-        const delta = pointerToGridDelta({ x: e.clientX, y: e.clientY }, dragStart, cellSize);
-        const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
 
-        if (valid && updates) {
-            setInvalidDropState(false);
-            updates.forEach(({ newX, newY }) => {
-                const cell = getCell(newX, newY);
-                cell?.classList.add('grid-cell--valid-target');
-            });
+        if (activeContainer === 'grid') {
+            const delta = pointerToGridDelta({ x: e.clientX, y: e.clientY }, dragStart, cellSize);
+            const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
+            handleTargetResult(valid, updates);
         } else {
-            setInvalidDropState(true);
+            // Rack -> Grid: show preview of spread placement
+            const gridRect = gridEl.getBoundingClientRect();
+            const cursorX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
+            const cursorY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
+
+            // Check if cursor is over the grid
+            if (cursorX < 0 || cursorX >= state.level.gridSize || cursorY < 0 || cursorY >= state.level.gridSize) {
+                setInvalidDropState(true);
+                return;
+            }
+
+            const spreadCells = findSpreadCells(cursorX, cursorY, selectedIds.size, state.level.gridSize, state.grid);
+            const valid = spreadCells.length === selectedIds.size;
+            setInvalidDropState(!valid);
+
+            if (valid) {
+                spreadCells.forEach(c => {
+                    const cell = getCell(c.x, c.y);
+                    if (cell) cell.classList.add('grid-cell--valid-target');
+                });
+            }
         }
     };
+
+
 
     const onDragEnd = e => {
         document.removeEventListener('pointermove', onDragMove);
         document.removeEventListener('pointerup', onDragEnd);
         isDragging = false;
+        justFinishedDragging = true;
+        setTimeout(() => justFinishedDragging = false, 50);
+
         clearCellHighlights(gridEl);
         setInvalidDropState(false);
 
@@ -170,22 +449,59 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
         const isOverRack = e.clientY > rackRect.top;
 
         if (isOutsideGrid || isOverRack) {
-            onTilesReturn([...selectedIds]);
+            if (activeContainer === 'grid') {
+                onTilesReturn([...selectedIds]);
+            } else {
+                // Return to rack (reset position)
+                // We need to put them back into the rack element
+                selectedIds.forEach(id => {
+                    const el = $(id);
+                    if (el) {
+                        el.style.position = '';
+                        el.style.left = '';
+                        el.style.top = '';
+                        el.style.width = '';
+                        el.style.height = '';
+                        el.style.zIndex = '';
+                        rackEl.appendChild(el);
+                    }
+                });
+            }
+
             clearSelection();
+            if (magnetMode) setMagnetMode(false);
             return;
         }
 
         const cellSize = getCellSize(gridEl);
-        const delta = pointerToGridDelta({ x: e.clientX, y: e.clientY }, dragStart, cellSize);
 
-        if (!delta.dx && !delta.dy) {
-            snapBack();
-            clearSelection();
-            return;
+        let updates = null;
+
+        if (activeContainer === 'grid') {
+            const delta = pointerToGridDelta({ x: e.clientX, y: e.clientY }, dragStart, cellSize);
+
+            if (!delta.dx && !delta.dy) {
+                snapBack();
+                clearSelection();
+                return;
+            }
+
+            const res = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
+            if (res.valid) updates = res.updates;
+        } else {
+            // From Rack: use smart spread placement
+            const gridRect = gridEl.getBoundingClientRect();
+            const cursorX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
+            const cursorY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
+
+            const spreadCells = findSpreadCells(cursorX, cursorY, selectedIds.size, state.level.gridSize, state.grid);
+            if (spreadCells.length === selectedIds.size) {
+                const idsArray = [...selectedIds];
+                updates = spreadCells.map((c, i) => ({ id: idsArray[i], oldX: -1, oldY: -1, newX: c.x, newY: c.y }));
+            }
         }
 
-        const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
-        if (!valid || updates.length !== selectedIds.size) {
+        if (!updates || updates.length !== selectedIds.size) {
             snapBack();
             clearSelection();
             return;
@@ -196,8 +512,18 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
             state.grid.set(`${u.newX},${u.newY}`, u.id);
             const el = $(u.id);
             if (el) {
+                // Reset fixed positioning before snapping to grid
+                el.style.position = 'absolute';
+                el.style.width = '';
+                el.style.height = '';
+                el.style.zIndex = '';
+                // snapTileToCell will set left/top relative to gridEl
+                gridEl.appendChild(el);
+
                 el.dataset.gridX = u.newX;
                 el.dataset.gridY = u.newY;
+                el.classList.add('tile--placed');
+                el.classList.remove('tile--selected');
                 snapTileToCell(el, gridEl, u.newX, u.newY);
                 el.classList.remove('tile--dragging', 'tile--snapping');
                 void el.offsetWidth;
@@ -212,31 +538,54 @@ export const initSelection = ({ gridEl, state, onTilesReturn, onValidate }) => {
 
     const snapBack = () => {
         selectedIds.forEach(id => {
-            const el = $(id), orig = origGridPos.get(id);
-            if (el && orig) {
-                snapTileToCell(el, gridEl, orig.x, orig.y);
-                el.classList.remove('tile--dragging', 'tile--snapping');
-                void el.offsetWidth;
-                el.classList.add('tile--snapping');
-                el.addEventListener('animationend', () => el.classList.remove('tile--snapping'), { once: true });
+            const el = $(id);
+            if (!el) return;
+
+            el.style.width = '';
+            el.style.height = '';
+            el.style.zIndex = '';
+            el.classList.remove('tile--dragging', 'tile--snapping');
+
+            if (activeContainer === 'grid') {
+                const orig = origGridPos.get(id);
+                if (orig) {
+                    el.style.position = 'absolute';
+                    gridEl.appendChild(el);
+                    snapTileToCell(el, gridEl, orig.x, orig.y);
+                }
+            } else {
+                // Snap back to rack (reset style)
+                el.style.position = '';
+                el.style.left = '';
+                el.style.top = '';
+                rackEl.appendChild(el);
             }
+
+            void el.offsetWidth;
+            el.classList.add('tile--snapping');
+            el.addEventListener('animationend', () => el.classList.remove('tile--snapping'), { once: true });
         });
     };
 
     const onDocumentClick = e => {
-        if (selectedIds.size && !isDragging && !isSelecting && !justFinishedSelecting && !e.target.closest('.game-grid')) {
+        if (selectedIds.size && !isDragging && !isSelecting && !justFinishedSelecting &&
+            !e.target.closest('.game-grid') && !e.target.closest('.rack-container') &&
+            !e.target.closest('.toolbar') && !e.target.closest('.header') && !e.target.closest('button') &&
+            !e.target.closest('.info-dialog') && !e.target.closest('.info-dialog-overlay')) {
             clearSelection();
         }
     };
 
     document.addEventListener('click', onDocumentClick);
-    gameContainer.addEventListener('pointerdown', onGridDown);
     return {
         clearSelection,
         dispose: () => {
             document.removeEventListener('click', onDocumentClick);
-            gameContainer.removeEventListener('pointerdown', onGridDown);
+            gameContainer.removeEventListener('pointerdown', onContainerDown, { capture: true });
+            rackEl.removeEventListener('pointerdown', onContainerDown, { capture: true });
+            magnetBtn?.removeEventListener('click', () => setMagnetMode(!magnetMode));
             clearSelection();
         }
     };
 };
+

@@ -12,6 +12,7 @@ export const renderGridCells = (gridEl, cols, rows) => {
     gridEl.innerHTML = '';
     gridEl.style.setProperty('--grid-cols', cols);
     gridEl.style.setProperty('--grid-rows', rows);
+    document.querySelector('.app')?.style.setProperty('--grid-rows', rows);
 
     for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {

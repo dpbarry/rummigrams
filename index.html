@@ -24,12 +24,9 @@
 </head>
 
 <body>
-    <!-- Router will inject pages here -->
 
     <script src="js/router.js"></script>
     <script>
-        // Initial Load
-        // Check hash or default to home
         const initialPath = location.hash ? location.hash.substring(1) : 'home.html';
         Router(initialPath);
     </script>

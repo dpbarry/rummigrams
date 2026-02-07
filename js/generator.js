@@ -10,27 +10,30 @@ const wouldCreateBlock = (grid, x, y) => {
 };
 
 const calcDifficultyParams = (difficulty, gridSize) => {
-    const t = clamp((difficulty - 1) / 9, 0, 1); // 1-10 → 0-1
+    const t = clamp((difficulty - 1) / 9, 0, 1);
+    const baseArea = gridSize * gridSize;
 
-    const valueSpread = Math.round(lerp(6, 13, t));
+    // Fill factors with noticeable jumps between difficulties
+    // Zen(1): 25-33%, Easy(3): 38-46%, Normal(5): 50-58%, Hard(7): 62-70%, Expert(10): 78-86%
+    const baseFill = lerp(0.25, 0.82, t);
+    const variance = (Math.random() - 0.5) * 0.16; // ±8% random swing
+    const fillFactor = clamp(baseFill + variance, 0.20, 0.88);
+    const targetTiles = Math.max(6, Math.round(baseArea * fillFactor));
+
+    // Value range: easier = narrower (more flexibility), harder = wider (precision needed)
+    const valueSpread = Math.round(lerp(5, 13, t));
     const minValue = 1;
     const maxValue = minValue + valueSpread - 1;
 
-    const baseArea = gridSize * gridSize;
-    // Zen: ~35% fill (wiggle room), Expert: ~75% fill (packed)
-    const fillFactor = lerp(0.35, 0.75, t);
-    const targetTiles = Math.round(baseArea * fillFactor);
+    // Easier = more sets (flexible), harder = more runs (sequential precision)
+    const runBias = lerp(0.25, 0.75, t);
+    const avgGroupLen = lerp(3.6, 3.1, t);
 
-    const runBias = lerp(0.3, 0.7, t);
-    const avgGroupLen = lerp(3.5, 3.2, t);
+    // Reuse limits: easier = generous (many solutions), harder = tight (specific solutions)
+    const maxPerValue = Math.max(3, Math.ceil(targetTiles * lerp(0.45, 0.28, t)));
 
-    // Expert needs to reuse numbers more to pack tight
-    const maxPerValue = Math.max(3, Math.ceil(targetTiles * lerp(0.40, 0.30, t)));
-
-    const branchChance = lerp(0.5, 0.90, t);
-
-    // Heuristic: 0 = Sprawl (Random/Edge), 1 = Rug (Compact/Center)
-    const compactness = lerp(0, 1, t);
+    const branchChance = lerp(0.45, 0.92, t);
+    const compactness = lerp(0.1, 0.95, t);
 
     return { minValue, maxValue, gridSize, targetTiles, runBias, avgGroupLen, maxPerValue, branchChance, compactness };
 };
@@ -199,31 +202,31 @@ const generatePuzzleAttempt = params => {
 
 const isSolvable = tiles => {
     if (tiles.length === 0) return true;
-    
+
     const counts = new Map();
     tiles.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
-    
+
     const solve = remaining => {
         if (remaining.size === 0) return true;
-        
+
         const values = Array.from(remaining.keys()).sort((a, b) => a - b);
         const minVal = values[0];
         const minCount = remaining.get(minVal);
-        
+
         for (let setSize = 3; setSize <= minCount; setSize++) {
             const next = new Map(remaining);
             next.set(minVal, minCount - setSize);
             if (next.get(minVal) === 0) next.delete(minVal);
             if (solve(next)) return true;
         }
-        
+
         let maxRunLen = 1;
         while (remaining.has(minVal + maxRunLen)) maxRunLen++;
-        
+
         for (let runLen = 3; runLen <= maxRunLen; runLen++) {
             const next = new Map(remaining);
             let valid = true;
-            
+
             for (let i = 0; i < runLen; i++) {
                 const val = minVal + i;
                 if (!remaining.has(val)) {
@@ -234,13 +237,13 @@ const isSolvable = tiles => {
                 if (newCount > 0) next.set(val, newCount);
                 else next.delete(val);
             }
-            
+
             if (valid && solve(next)) return true;
         }
-        
+
         return false;
     };
-    
+
     return solve(counts);
 };
 
@@ -253,7 +256,7 @@ const meetsQuality = (tiles, targetTiles, params) => {
     const maxAllowed = params.maxPerValue + 1;
     const minUnique = Math.max(3, Math.ceil(targetTiles / 6));
 
-    const threshold = params.compactness > 0.5 ? 0.85 : 0.70;
+    const threshold = lerp(0.65, 0.88, params.compactness);
 
     return tiles.length >= targetTiles * threshold && maxCount <= maxAllowed && uniqueValues >= minUnique && isSolvable(tiles);
 };

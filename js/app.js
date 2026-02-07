@@ -1,6 +1,7 @@
 import { validateBoard } from './engine.js';
 import { toggleTheme, initTheme } from './theme.js';
 import { generateLevel } from './generator.js';
+import { saveGame, loadGame } from './storage.js';
 import {
     renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, renderGridCells,
     initParticleBurstSystem, createCellParticleBurst, triggerVictory, createConfetti, repositionPlacedTiles, initRackTransition, cleanupParticleBurstSystem
@@ -9,6 +10,26 @@ import { initInteractions } from './interactions.js';
 import { initToolbar, calcRemainingTiles, updateRemainingCounter } from './toolbar.js';
 import { initSelection } from './selection.js';
 import { initScrollFade } from './scrollfade.js';
+
+// Fix click detection for buttons with scale animations
+const fixScaleClick = (btn, callback) => {
+    if (!btn) return;
+    let startRect = null;
+    const onDown = e => {
+        startRect = btn.getBoundingClientRect();
+        document.addEventListener('pointerup', onUp, { once: true });
+    };
+    const onUp = e => {
+        if (!startRect) return;
+        const { clientX: x, clientY: y } = e;
+        if (x >= startRect.left && x <= startRect.right && y >= startRect.top && y <= startRect.bottom) {
+            callback(e);
+        }
+        startRect = null;
+    };
+    btn.addEventListener('pointerdown', onDown);
+    return () => btn.removeEventListener('pointerdown', onDown);
+};
 
 const state = {
     grid: new Map(),
@@ -28,6 +49,8 @@ let gridEl, rackEl, themeBtn;
 
 const buildValueGrid = () => new Map([...state.grid].map(([pos, id]) => [pos, state.tiles.get(id)]));
 
+const saveState = () => saveGame(state);
+
 const placeTile = (id, x, y) => {
     const el = $(id);
     if (!el) return;
@@ -35,6 +58,7 @@ const placeTile = (id, x, y) => {
     state.hand.delete(id);
     positionTileOnGrid(el, x, y, gridEl);
     runValidation();
+    saveState();
 };
 
 const removeTile = (id, x, y, toRack = true) => {
@@ -43,6 +67,7 @@ const removeTile = (id, x, y, toRack = true) => {
     state.grid.delete(`${x},${y}`);
     if (toRack) { state.hand.add(id); returnTileToRack(el, rackEl); }
     runValidation();
+    saveState();
 };
 
 const getTileAt = (x, y) => state.grid.get(`${x},${y}`) || null;
@@ -67,6 +92,7 @@ const swapTiles = (draggedId, draggedOrigPos, occupantId, targetX, targetY) => {
     }
 
     runValidation();
+    saveState();
 };
 
 const runValidation = () => {
@@ -89,6 +115,7 @@ const runValidation = () => {
 
 const handleVictory = () => {
     state.isVictory = true;
+    saveState();
     updateRemainingCounter(0, true);
     triggerVictory(gridEl);
     setTimeout(() => createConfetti(40), 300);
@@ -150,6 +177,52 @@ const newGame = () => {
     if (!particleBurstInitialized) { initParticleBurstSystem(gridEl); particleBurstInitialized = true; }
     renderRack(rackEl, state.tiles, state.hand);
     updateRemainingCounter(state.tiles.size);
+    saveState();
+};
+
+const loadSavedGame = () => {
+    const saved = loadGame();
+    if (!saved) return false;
+
+    state.grid = saved.grid;
+    state.tiles = saved.tiles;
+    state.hand = saved.hand;
+    state.isVictory = saved.isVictory;
+    state.level.gridSize = saved.gridSize;
+    state.validation = null;
+
+    renderGridCells(gridEl, state.level.gridSize, state.level.gridSize);
+    if (!particleBurstInitialized) { initParticleBurstSystem(gridEl); particleBurstInitialized = true; }
+
+    // Render tiles in hand to rack
+    renderRack(rackEl, state.tiles, state.hand);
+
+    // Create and position tiles on grid
+    state.grid.forEach((id, pos) => {
+        const [x, y] = pos.split(',').map(Number);
+        const value = state.tiles.get(id);
+        const existing = $(id);
+        if (existing) existing.remove();
+
+        const tile = document.createElement('div');
+        tile.id = id;
+        tile.className = 'tile tile--placed';
+        tile.setAttribute('role', 'listitem');
+        tile.setAttribute('tabindex', '0');
+        tile.dataset.value = value;
+        tile.dataset.gridX = x;
+        tile.dataset.gridY = y;
+        tile.innerHTML = `<span class="tile__number">${value <= 10 ? value : ['J', 'Q', 'K'][value - 11]}</span>`;
+        gridEl.appendChild(tile);
+        positionTileOnGrid(tile, x, y, gridEl);
+    });
+
+    runValidation();
+    if (state.isVictory) {
+        updateRemainingCounter(0, true);
+        triggerVictory(gridEl);
+    }
+    return true;
 };
 
 let cleanupFns = [];
@@ -173,10 +246,26 @@ const initGame = () => {
 
     initToolbar({ state, rackEl, onScatter: scatterToBoard, onReturnAll: returnAllToHand });
 
-    const selection = initSelection({ gridEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
+    const selection = initSelection({ gridEl, rackEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
     if (selection && selection.dispose) cleanupFns.push(selection.dispose);
 
-    themeBtn.addEventListener('click', toggleTheme);
+    const cleanupTheme = fixScaleClick(themeBtn, toggleTheme);
+    if (cleanupTheme) cleanupFns.push(cleanupTheme);
+
+    // Info Dialog - scope to app container to avoid conflicts during page transitions
+    const appContainer = document.querySelector('.app');
+    const btnInfo = appContainer?.querySelector('#btn-info');
+    const overlay = appContainer?.querySelector('.info-dialog-overlay');
+    const closeBtn = appContainer?.querySelector('.info-dialog-close');
+
+    const openDialog = () => overlay?.classList.add('open');
+    const closeDialog = () => overlay?.classList.remove('open');
+
+    const cleanupInfo = fixScaleClick(btnInfo, openDialog);
+    const cleanupClose = fixScaleClick(closeBtn, closeDialog);
+    if (cleanupInfo) cleanupFns.push(cleanupInfo);
+    if (cleanupClose) cleanupFns.push(cleanupClose);
+    if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(); });
 
     let resizeTimer;
     const resizeObserver = new ResizeObserver(() => {
@@ -202,7 +291,14 @@ const initGame = () => {
     initParticleBurstSystem(gridEl);
     cleanupFns.push(cleanupParticleBurstSystem);
 
-    newGame();
+    const forceNewGame = sessionStorage.getItem('rummigrams_new_game') === 'true';
+    sessionStorage.removeItem('rummigrams_new_game');
+
+    if (!forceNewGame && loadSavedGame()) {
+        // Resumed saved game
+    } else {
+        newGame();
+    }
 };
 
 export { initGame, disposeGame };

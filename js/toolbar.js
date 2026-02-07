@@ -52,7 +52,6 @@ export const initToolbar = ({ state, rackEl, onScatter, onReturnAll }) => {
     document.getElementById('btn-sort-flush').addEventListener('click', sortByFlush);
     document.getElementById('btn-sort-straight').addEventListener('click', sortByStraight);
     document.getElementById('btn-scatter')?.addEventListener('click', () => onScatter?.());
-    document.getElementById('btn-return-all')?.addEventListener('click', () => onReturnAll?.());
 
     return { shuffleHand, sortByFlush, sortByStraight };
 };
