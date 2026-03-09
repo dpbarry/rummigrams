@@ -8,8 +8,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     let selectionRect = null;
     let isSelecting = false;
     let selStart = { x: 0, y: 0 };
-    let selectionCaptureTarget = null;
-    let selectionPointerId = null;
     let justFinishedSelecting = false;
     let preDragSelectedIds = new Set();
     let magnetMode = false;
@@ -141,71 +139,42 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     };
 
     const onContainerDown = e => {
-        if (magnetMode && e.target.closest('.tile') && !e.forceDrag) {
-            onMagnetTileDown(e);
-        } else {
-            onSelectionStart(e);
+        if (e.target.closest('.tile')) {
+            if (magnetMode && !e.forceDrag) onMagnetTileDown(e);
+            return;
         }
+        if (rackEl.contains(e.target) || e.currentTarget === rackEl) return;
+        onSelectionStart(e);
     };
 
     gameContainer.addEventListener('pointerdown', onContainerDown, { capture: true });
     rackEl.addEventListener('pointerdown', onContainerDown, { capture: true });
 
     const onSelectionStart = e => {
-        if (e.target.closest('.tile')) return;
-
-        // Determine container based on where the event occurred
-        const isInRack = rackEl.contains(e.target) || e.currentTarget === rackEl;
-        const container = isInRack ? 'rack' : 'grid';
-
-
         e.preventDefault();
         isSelecting = true;
         selStart = { x: e.clientX, y: e.clientY };
-
-        // If clicking in a different container, clear previous selection immediately
-        if (activeContainer && activeContainer !== container) {
-            clearSelection();
-        }
-
-        activeContainer = container;
-
-        if (magnetMode) {
-            preDragSelectedIds = new Set(selectedIds);
-        } else {
-            clearSelection();
-            activeContainer = container;
-        }
-
-        try {
-            e.target.setPointerCapture(e.pointerId);
-            selectionCaptureTarget = e.target;
-            selectionPointerId = e.pointerId;
-        } catch (_) {}
+        if (activeContainer && activeContainer !== 'grid') clearSelection();
+        if (magnetMode) preDragSelectedIds = new Set(selectedIds);
+        else clearSelection();
+        activeContainer = 'grid';
 
         document.addEventListener('pointermove', onSelecting);
         document.addEventListener('pointerup', onSelectEnd);
+        document.addEventListener('pointercancel', onSelectEnd);
     };
-
-    // onMagnetClick -> DELETE (logic moved to onMagnetTileDown)
 
     const onSelecting = e => {
         if (!isSelecting) return;
         e.preventDefault();
 
         if (!selectionRect) {
-            if (Math.abs(e.clientX - selStart.x) < DRAG_THRESHOLD && Math.abs(e.clientY - selStart.y) < DRAG_THRESHOLD) {
-                return;
-            }
+            if (Math.abs(e.clientX - selStart.x) < DRAG_THRESHOLD && Math.abs(e.clientY - selStart.y) < DRAG_THRESHOLD) return;
             selectionRect = Object.assign(document.createElement('div'), { className: 'selection-rect' });
-
-            // Append to the active container
-            if (activeContainer === 'grid') gridEl.appendChild(selectionRect);
-            else if (activeContainer === 'rack') rackEl.appendChild(selectionRect);
+            gridEl.appendChild(selectionRect);
         }
 
-        const containerEl = activeContainer === 'grid' ? gridEl : rackEl;
-        const rect = containerEl.getBoundingClientRect();
+        const rect = gridEl.getBoundingClientRect();
         const [x1, y1] = [selStart.x - rect.left, selStart.y - rect.top];
         const [x2, y2] = [e.clientX - rect.left, e.clientY - rect.top];
         // Clip to container bounds? CSS overflow hidden on rack might handle it, but valid point.
@@ -218,10 +187,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
         const [minX, maxX] = [Math.min(selStart.x, e.clientX), Math.max(selStart.x, e.clientX)];
         const [minY, maxY] = [Math.min(selStart.y, e.clientY), Math.max(selStart.y, e.clientY)];
-
-        // Select tiles in the active container only
-        const tileSelector = activeContainer === 'grid' ? '.tile--placed' : '.tile';
-        const tilesToCheck = containerEl.querySelectorAll(tileSelector);
+        const tilesToCheck = gridEl.querySelectorAll('.tile--placed');
 
         const nowSelected = new Set(
             [...tilesToCheck]
@@ -242,15 +208,11 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         selectedIds = nowSelected;
     };
 
-    const onSelectEnd = (e) => {
+    const onSelectEnd = () => {
         document.removeEventListener('pointermove', onSelecting);
         document.removeEventListener('pointerup', onSelectEnd);
+        document.removeEventListener('pointercancel', onSelectEnd);
         isSelecting = false;
-        try {
-            if (selectionCaptureTarget && selectionPointerId != null) selectionCaptureTarget.releasePointerCapture(selectionPointerId);
-        } catch (_) {}
-        selectionCaptureTarget = null;
-        selectionPointerId = null;
 
         if (!selectionRect && magnetMode) {
             clearSelection();
