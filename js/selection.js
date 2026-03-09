@@ -8,6 +8,8 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     let selectionRect = null;
     let isSelecting = false;
     let selStart = { x: 0, y: 0 };
+    let selectionCaptureTarget = null;
+    let selectionPointerId = null;
     let justFinishedSelecting = false;
     let preDragSelectedIds = new Set();
     let magnetMode = false;
@@ -172,8 +174,14 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             preDragSelectedIds = new Set(selectedIds);
         } else {
             clearSelection();
-            activeContainer = container; // Re-set after clear
+            activeContainer = container;
         }
+
+        try {
+            e.target.setPointerCapture(e.pointerId);
+            selectionCaptureTarget = e.target;
+            selectionPointerId = e.pointerId;
+        } catch (_) {}
 
         document.addEventListener('pointermove', onSelecting);
         document.addEventListener('pointerup', onSelectEnd);
@@ -183,6 +191,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
     const onSelecting = e => {
         if (!isSelecting) return;
+        e.preventDefault();
 
         if (!selectionRect) {
             if (Math.abs(e.clientX - selStart.x) < DRAG_THRESHOLD && Math.abs(e.clientY - selStart.y) < DRAG_THRESHOLD) {
@@ -233,10 +242,15 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         selectedIds = nowSelected;
     };
 
-    const onSelectEnd = () => {
+    const onSelectEnd = (e) => {
         document.removeEventListener('pointermove', onSelecting);
         document.removeEventListener('pointerup', onSelectEnd);
         isSelecting = false;
+        try {
+            if (selectionCaptureTarget && selectionPointerId != null) selectionCaptureTarget.releasePointerCapture(selectionPointerId);
+        } catch (_) {}
+        selectionCaptureTarget = null;
+        selectionPointerId = null;
 
         if (!selectionRect && magnetMode) {
             clearSelection();
