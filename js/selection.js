@@ -16,7 +16,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     let dragStart = { x: 0, y: 0 };
     let origGridPos = new Map();
     let origPixelPos = new Map();
-    let activeContainer = null; // 'grid' or 'rack'
+    let activeContainer = null;
 
     const $ = id => document.getElementById(id);
     const getCell = (x, y) => gridEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
@@ -76,7 +76,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
                 activeContainer = null;
             }
         } else {
-            // Check if we are switching containers
             const tileContainer = tile.closest('.game-grid') ? 'grid' : 'rack';
             if (activeContainer && activeContainer !== tileContainer) {
                 clearSelection();
@@ -112,7 +111,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
                 moved = true;
                 cleanup();
 
-                // Handover to interactions.js
                 const dragEvent = new PointerEvent('pointerdown', {
                     bubbles: true, cancelable: true,
                     clientX: startX, clientY: startY,
@@ -177,9 +175,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         const rect = gridEl.getBoundingClientRect();
         const [x1, y1] = [selStart.x - rect.left, selStart.y - rect.top];
         const [x2, y2] = [e.clientX - rect.left, e.clientY - rect.top];
-        // Clip to container bounds? CSS overflow hidden on rack might handle it, but valid point.
-        // For now, let it be drawn normally, CSS should clip it if container has overflow: hidden.
-
         Object.assign(selectionRect.style, {
             left: `${Math.min(x1, x2)}px`, top: `${Math.min(y1, y2)}px`,
             width: `${Math.abs(x2 - x1)}px`, height: `${Math.abs(y2 - y1)}px`
@@ -260,9 +255,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
         try {
             e.target.setPointerCapture(e.pointerId);
-        } catch (err) {
-            // Ignore if pointer capture fails
-        }
+        } catch (_) {}
 
         origGridPos.clear();
         origPixelPos.clear();
@@ -272,11 +265,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         selectedIds.forEach(id => {
             const el = $(id);
             if (!el) return;
-
-            // Calculate current visual rect to maintain position when switching to fixed
             const rect = el.getBoundingClientRect();
-
-            // Record initial visual position (fixed coordinates)
             origPixelPos.set(id, { left: rect.left, top: rect.top });
 
             if (activeContainer === 'grid') {
@@ -286,16 +275,13 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
                     origGridPos.set(id, { x, y });
                 }
             } else if (activeContainer === 'rack') {
-                // For rack items, calculate relative offsets from the primary tile
                 const primaryEl = $(primaryTileId);
                 const pRect = primaryEl.getBoundingClientRect();
                 const relX = rect.left - pRect.left;
                 const relY = rect.top - pRect.top;
-
                 origGridPos.set(id, { relX, relY, isRack: true });
             }
 
-            // Reparent to body and set fixed position
             el.style.position = 'fixed';
             el.style.left = `${rect.left}px`;
             el.style.top = `${rect.top}px`;
@@ -303,14 +289,12 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             el.style.height = `${rect.height}px`;
             el.style.zIndex = '1000';
             document.body.appendChild(el);
-
             el.classList.add('tile--dragging');
         });
 
-        // If dragging from rack, collapse tiles into a stack around the primary tile
         if (activeContainer === 'rack' && selectedIds.size > 1) {
             const primaryRect = tile.getBoundingClientRect();
-            const stackOffset = 8; // pixels offset per tile
+            const stackOffset = 8;
             let i = 0;
             selectedIds.forEach(id => {
                 if (id === primaryTileId) return;
@@ -319,7 +303,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
                 el.style.left = `${primaryRect.left + i * stackOffset}px`;
                 el.style.top = `${primaryRect.top - i * stackOffset}px`;
                 el.style.zIndex = `${1000 - i}`;
-                // Update origPixelPos to this stacked position for smooth dragging
                 origPixelPos.set(id, { left: primaryRect.left + i * stackOffset, top: primaryRect.top - i * stackOffset });
             });
         }
@@ -345,9 +328,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         }
     };
 
-    // Smart placement: find N free cells starting from cursor position, spreading outward
     const findSpreadCells = (startX, startY, count, gridSize, occupiedSet) => {
-        // Clamp to valid grid bounds
         const clampedX = Math.max(0, Math.min(gridSize - 1, startX));
         const clampedY = Math.max(0, Math.min(gridSize - 1, startY));
 
@@ -361,7 +342,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             if (!occupiedSet.has(`${x},${y}`)) {
                 cells.push({ x, y });
             }
-            // Add neighbors (4-directional spread)
             for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
                 const nx = x + dx, ny = y + dy;
                 const key = `${nx},${ny}`;
@@ -374,21 +354,18 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         return cells;
     };
 
-    // Calculate cursor grid position with generous margin (allows hovering near edges)
     const getCursorGridPos = (e, gridRect, cellSize) => {
-        const margin = cellSize.w * 0.5; // Half a cell margin
+        const margin = cellSize.w * 0.5;
         const expandedLeft = gridRect.left - margin;
         const expandedTop = gridRect.top - margin;
         const expandedRight = gridRect.right + margin;
         const expandedBottom = gridRect.bottom + margin;
 
-        // Check if within generous bounds
         if (e.clientX < expandedLeft || e.clientX > expandedRight ||
             e.clientY < expandedTop || e.clientY > expandedBottom) {
             return null;
         }
 
-        // Calculate raw cell position (can be negative or beyond grid)
         const rawX = Math.floor((e.clientX - gridRect.left) / cellSize.w);
         const rawY = Math.floor((e.clientY - gridRect.top) / cellSize.h);
 
@@ -407,7 +384,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             const { valid, updates } = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
             handleTargetResult(valid, updates);
         } else {
-            // Rack -> Grid: show preview of spread placement
             const gridRect = gridEl.getBoundingClientRect();
             const cursorPos = getCursorGridPos(e, gridRect, cellSize);
 
@@ -446,7 +422,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
         const cellSize = getCellSize(gridEl);
         const isOverRack = e.clientY > rackRect.top;
 
-        // For rack->grid drops, use generous positioning
         const cursorPos = activeContainer === 'rack' ? getCursorGridPos(e, gridRect, cellSize) : null;
         const isOutsideGrid = activeContainer === 'rack'
             ? (!cursorPos && !isOverRack)
@@ -456,8 +431,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             if (activeContainer === 'grid') {
                 onTilesReturn([...selectedIds]);
             } else {
-                // Return to rack (reset position)
-                // We need to put them back into the rack element
                 selectedIds.forEach(id => {
                     const el = $(id);
                     if (el) {
@@ -491,7 +464,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             const res = computeTargetPositions(origGridPos, delta, state.level.gridSize, state.grid, selectedIds);
             if (res.valid) updates = res.updates;
         } else {
-            // From Rack: use smart spread placement with generous cursor position
             const spreadCells = findSpreadCells(cursorPos.x, cursorPos.y, selectedIds.size, state.level.gridSize, state.grid);
             if (spreadCells.length === selectedIds.size) {
                 const idsArray = [...selectedIds];
@@ -511,12 +483,10 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
             state.hand.delete(u.id);
             const el = $(u.id);
             if (el) {
-                // Reset fixed positioning before snapping to grid
                 el.style.position = 'absolute';
                 el.style.width = '';
                 el.style.height = '';
                 el.style.zIndex = '';
-                // snapTileToCell will set left/top relative to gridEl
                 gridEl.appendChild(el);
 
                 el.dataset.gridX = u.newX;
@@ -553,7 +523,6 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
                     snapTileToCell(el, gridEl, orig.x, orig.y);
                 }
             } else {
-                // Snap back to rack (reset style)
                 el.style.position = '';
                 el.style.left = '';
                 el.style.top = '';

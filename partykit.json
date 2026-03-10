@@ -1,0 +1,4 @@
+{
+  "name": "rummigrams",
+  "main": "party/server.js"
+}

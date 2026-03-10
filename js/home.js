@@ -1,9 +1,21 @@
 import { toggleTheme, initTheme } from './theme.js';
 import { hasContinuableGame } from './storage.js';
+import { generateLevel } from './generator.js';
+
+const readSettings = () => ({
+    difficulty: parseInt(sessionStorage.getItem('rummigrams_difficulty') || '5', 10),
+    gridSize: parseInt(sessionStorage.getItem('rummigrams_gridSize') || '6', 10)
+});
+
+const pregenerate = () => {
+    const settings = readSettings();
+    window.__pregenerated = generateLevel(settings);
+    window.__pregeneratedSettings = settings;
+};
 
 const $ = id => document.getElementById(id);
 
-// Fix click detection for buttons with scale animations
+
 const fixScaleClick = (btn, callback) => {
     if (!btn) return;
     let startRect = null;
@@ -25,7 +37,6 @@ const fixScaleClick = (btn, callback) => {
 export const initHome = () => {
     initTheme();
     initParallaxTiles();
-    $('home-settings-panel');
     const btnTheme = $('home-btn-theme');
     const btnCreate = $('home-btn-create');
     const btnStart = $('home-btn-start');
@@ -35,17 +46,16 @@ export const initHome = () => {
         btnContinue.style.display = '';
     }
 
-    // Theme Toggle
     fixScaleClick(btnTheme, (e) => {
         e.stopPropagation();
         toggleTheme();
     });
 
-    // Info Dialog - scope to home container to avoid conflicts during page transitions
     const homeContainer = document.querySelector('.home-container');
+    const page = homeContainer?.closest('.page');
     const btnInfo = $('home-btn-info');
-    const overlay = homeContainer?.querySelector('.info-dialog-overlay');
-    const closeBtn = homeContainer?.querySelector('.info-dialog-close');
+    const overlay = page?.querySelector('.info-dialog-overlay');
+    const closeBtn = page?.querySelector('.info-dialog-close');
 
     const openDialog = () => overlay?.classList.add('open');
     const closeDialog = () => overlay?.classList.remove('open');
@@ -54,18 +64,16 @@ export const initHome = () => {
     fixScaleClick(closeBtn, closeDialog);
     if (overlay) overlay.onclick = (e) => { if (e.target === overlay) closeDialog(); };
 
-    // Solo Play Accordion
-    // Solo Play Accordion (Removed in new layout)
-    // Settings are always visible in the hero card
-
-
-    // Start Game
     if (btnStart) {
         btnStart.onclick = () => {
             sessionStorage.setItem('rummigrams_new_game', 'true');
-            if (window.Router) {
-                window.Router('game.html');
+            const settings = readSettings();
+            if (!window.__pregenerated ||
+                window.__pregeneratedSettings?.difficulty !== settings.difficulty ||
+                window.__pregeneratedSettings?.gridSize !== settings.gridSize) {
+                pregenerate();
             }
+            if (window.Router) window.Router('game.html');
         };
     }
 
@@ -78,14 +86,17 @@ export const initHome = () => {
         };
     }
 
-    // Create Room (No-op)
     if (btnCreate) {
         btnCreate.onclick = () => {
-            console.log('Create Room clicked');
+            const roomId = Math.random().toString(36).slice(2, 10);
+            window.__pendingRoom = roomId;
+            sessionStorage.setItem('rummigrams_new_game', 'true');
+            sessionStorage.setItem('rummigrams_created_room', roomId);
+            if (window.Router) window.Router('game.html');
         };
     }
 
-    // Slider Configurations
+
     const SLIDER_CONFIG = {
         difficulty: {
             notches: [1, 2, 3, 4, 5],
@@ -105,7 +116,7 @@ export const initHome = () => {
         const min = parseFloat(slider.min);
         const max = parseFloat(slider.max);
 
-        // Create visual notches
+
         const track = slider.parentElement.querySelector('.slider-track');
         if (track) {
             let notchContainer = slider.parentElement.querySelector('.slider-notches');
@@ -151,7 +162,7 @@ export const initHome = () => {
         const onChange = (save = true) => {
             const val = parseFloat(slider.value);
             const snapped = snapToNotch(val);
-            slider.value = snapped; // Force snap on release
+            slider.value = snapped;
             updateVisuals(snapped, snapped);
 
             if (save) {
@@ -164,7 +175,7 @@ export const initHome = () => {
         slider.addEventListener('input', onInput);
         slider.addEventListener('change', () => onChange(true));
 
-        // Load saved or use default
+
         const saved = sessionStorage.getItem(config.storageKey);
         if (saved !== null) {
             const savedNum = parseFloat(saved);
@@ -180,12 +191,10 @@ export const initHome = () => {
         }
     };
 
-    // Initialize difficulty slider
     const diffSlider = document.querySelector('.compact-setting:nth-child(1) input[type="range"]');
     const diffDisplay = document.querySelector('.compact-setting:nth-child(1) .setting-value-display');
     if (diffSlider) initSlider(diffSlider, SLIDER_CONFIG.difficulty, diffDisplay);
 
-    // Initialize grid size slider
     const gridSlider = document.querySelector('.compact-setting:nth-child(2) input[type="range"]');
     const gridDisplay = document.querySelector('.compact-setting:nth-child(2) .setting-value-display');
     if (gridSlider) initSlider(gridSlider, SLIDER_CONFIG.gridSize, gridDisplay);
@@ -197,7 +206,7 @@ const initParallaxTiles = () => {
 
     const CHARS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 
-    // Anchors: base positions for landscape, pShift pushes tiles OUTWARD in portrait
+
     const ANCHORS = [
         { id: 'top-left', base: { x: 0.18, y: 0.10 }, pShift: { x: -0.14, y: 0.02 } },
         { id: 'top-right', base: { x: 0.82, y: 0.10 }, pShift: { x: 0.14, y: 0.02 } },

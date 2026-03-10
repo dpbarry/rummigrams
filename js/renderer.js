@@ -3,7 +3,6 @@ import { particleBurstSystem } from './particleburst.js';
 const createElement = (tag, className, attrs = {}) => {
     const el = document.createElement(tag);
     if (className) el.className = className;
-    // noinspection JSCheckFunctionSignatures
     Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
     return el;
 };

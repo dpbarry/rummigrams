@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RUMMY_GRAMS.exe</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --term-green: #33ff33;
+            --term-dim: #1a801a;
+            --term-bg: #050505;
+            --term-highlight: #112211;
+            --scanline: rgba(0, 0, 0, 0.3);
+            --neon-cyan: #00ffff;
+            --neon-magenta: #ff00ff;
+            --neon-yellow: #ffff00;
+        }
+
+        body {
+            font-family: 'VT323', monospace;
+            background: var(--term-bg);
+            color: var(--term-green);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden; /* No global scrollbar */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-shadow: none; /* Crisp edges */
+        }
+
+        /* Scanline Overlay */
+        body::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 2px, 3px 100%;
+            z-index: 999;
+            pointer-events: none;
+        }
+
+        .container {
+            border: 2px solid var(--term-green);
+            background: #000;
+            box-shadow: 0 0 10px var(--term-dim);
+            
+            /* Intelligent Scaling Logic */
+            width: 95vw;
+            max-width: 900px;
+            max-height: 95vh;
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+            box-sizing: border-box;
+            position: relative;
+            z-index: 1;
+        }
+
+        h2 {
+            margin: 0 0 10px 0;
+            color: var(--term-green);
+            text-align: center;
+            font-size: 2em;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            border-bottom: 1px dashed var(--term-dim);
+            padding-bottom: 5px;
+            flex-shrink: 0;
+        }
+
+        /* Top Controls Area - Keep Compact */
+        .top-controls {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 2px;
+            color: var(--term-green);
+            font-size: 1.1em;
+            text-transform: uppercase;
+        }
+        
+        textarea, input[type="number"] {
+            width: 100%;
+            background: #080808;
+            color: var(--term-green);
+            border: 1px solid var(--term-dim);
+            padding: 8px;
+            font-size: 1.2em;
+            font-family: 'VT323', monospace;
+            box-sizing: border-box;
+            outline: none;
+            resize: none;
+        }
+        
+        textarea:focus, input:focus {
+            border-color: var(--term-green);
+            background: #0f0f0f;
+        }
+
+        .settings { display: flex; gap: 10px; }
+        .setting-field { flex: 1; }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            background: #000;
+            color: var(--term-green);
+            border: 1px solid var(--term-green);
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1.3em;
+            font-family: 'VT323', monospace;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: var(--term-green);
+            color: #000;
+        }
+
+        button:disabled {
+            border-color: var(--term-dim);
+            color: var(--term-dim);
+            cursor: not-allowed;
+            background: #050505;
+        }
+
+        #status {
+            margin: 10px 0;
+            padding: 5px;
+            text-align: center;
+            font-weight: bold;
+            background: var(--term-highlight);
+            border: 1px solid var(--term-dim);
+            font-size: 1.1em;
+            flex-shrink: 0;
+        }
+        
+        #status::after {
+            content: "█";
+            animation: blink 1s infinite;
+            margin-left: 5px;
+            color: var(--term-green);
+        }
+
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* Navigation */
+        .nav-controls {
+            display: flex; gap: 10px; 
+            margin-bottom: 10px;
+            flex-shrink: 0;
+        }
+
+        /* GRID AREA - The Soul Restore */
+        #grid-wrapper {
+            flex: 1; /* Takes remaining height */
+            border: 1px dashed var(--term-dim);
+            background: #020202;
+            overflow: auto; /* Scroll ONLY inside grid if needed */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            min-height: 0; /* Crucial for flex nested scrolling */
+        }
+        
+        /* The Wireframe Grid */
+        #grid { 
+            display: grid; 
+            gap: 0; /* No gap, we rely on borders */
+            border: 1px solid var(--term-dim); 
+            /* Subtle grid background pattern */
+            background-image: 
+                linear-gradient(var(--term-dim) 1px, transparent 1px),
+                linear-gradient(90deg, var(--term-dim) 1px, transparent 1px);
+            background-size: 50px 50px; /* Matches cell size */
+            background-position: -1px -1px;
+        }
+
+        .cell {
+            width: 50px; height: 50px;
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            font-weight: bold; 
+            font-size: 26px;
+            /* The "Empty" Cell Look */
+            color: var(--term-dim); 
+            border: 1px dotted var(--term-dim); /* Restore the dotted retro look */
+            box-sizing: border-box;
+        }
+
+        /* The Filled Tile Look */
+        .cell.tile { 
+            background: var(--term-green); 
+            color: #000; 
+            /* Solid border to pop against the dotted grid */
+            border: 2px solid #000; 
+            box-shadow: inset 0 0 0 2px var(--term-green), 0 0 5px var(--term-dim);
+            z-index: 10;
+        }
+        
+        /* Face Cards */
+        .card-J { background: var(--neon-cyan) !important; color: #000 !important; box-shadow: inset 0 0 0 2px var(--neon-cyan) !important; }
+        .card-Q { background: var(--neon-magenta) !important; color: #000 !important; box-shadow: inset 0 0 0 2px var(--neon-magenta) !important; }
+        .card-K { background: var(--neon-yellow) !important; color: #000 !important; box-shadow: inset 0 0 0 2px var(--neon-yellow) !important; }
+        
+        /* Empty State */
+        #grid-wrapper:empty::after {
+            content: "AWAITING_DATA_STREAM...";
+            color: var(--term-dim);
+            font-size: 1.5em;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>&lt; RUMMY_SOLVER_PRO /&gt;</h2>
+    
+    <div class="top-controls">
+        <div class="input-group">
+            <label>&gt; INPUT TILES</label>
+            <textarea id="input" rows="1">5, 5, 5, 6, 7, 8, 9, 10, J, Q, K</textarea>
+        </div>
+
+        <div class="settings">
+            <div class="setting-field">
+                <label>&gt; MAX R</label>
+                <input type="number" id="maxRows" value="8" min="3" max="20">
+            </div>
+            <div class="setting-field">
+                <label>&gt; MAX C</label>
+                <input type="number" id="maxCols" value="10" min="3" max="20">
+            </div>
+        </div>
+
+        <button onclick="startSolver()">[ EXECUTE ]</button>
+    </div>
+    
+    <div id="status">SYSTEM_READY</div>
+
+    <div class="nav-controls">
+        <button class="secondary" id="btnPrev" onclick="nav(-1)" disabled>&lt;&lt;</button>
+        <button class="secondary" id="btnNext" onclick="nav(1)" disabled>&gt;&gt;</button>
+    </div>
+    
+    <div id="grid-wrapper">
+        <div id="grid"></div>
+    </div>
+</div>
+
+<script>
+ /**
+  * RUMMY SOLVER LOGIC CORE
+  * Fully optimized for speed and style.
+  */
+
+ let solutions = [];
+ let uniqueSignatures = new Set();
+ let currentIndex = 0;
+ const MAX_SOLUTIONS = 50; 
+
+ const faces = { 'A': 1, 'T': 10, 'J': 11, 'Q': 12, 'K': 13 };
+ const revFaces = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' };
+
+ function parseTile(str) {
+   str = str.trim().toUpperCase();
+   if (faces[str]) return faces[str];
+   if (str === '10') return 10; 
+   let val = parseInt(str);
+   return isNaN(val) ? null : val;
+ }
+
+ function formatTile(val) {
+   if (revFaces[val]) return revFaces[val];
+   return val.toString();
+ }
+
+ function startSolver() {
+   const input = document.getElementById('input').value;
+   const maxRows = parseInt(document.getElementById('maxRows').value) || 10;
+   const maxCols = parseInt(document.getElementById('maxCols').value) || 10;
+   const status = document.getElementById('status');
+
+   let raw = input.split(/[, ]+/);
+   let tiles = [];
+   for(let s of raw) {
+     if(!s) continue;
+     let val = parseTile(s);
+     if(val) tiles.push(val);
+   }
+
+   if (tiles.length === 0) {
+     status.innerText = "ERR: NO_TILES";
+     return;
+   }
+
+   solutions = [];
+   uniqueSignatures = new Set();
+   currentIndex = 0;
+   updateNav();
+   status.innerText = "COMPUTING...";
+   document.getElementById('grid').innerHTML = '';
+
+   setTimeout(() => {
+     const counts = {};
+     tiles.forEach(t => counts[t] = (counts[t] || 0) + 1);
+     
+     solve(new Map(), counts, maxRows, maxCols, new Set());
+
+     if (solutions.length > 0) {
+       status.innerText = `SUCCESS: ${solutions.length} CONFIGS FOUND`;
+       render(solutions[0]);
+       updateNav();
+     } else {
+       status.innerText = "ERR: NO_SOLUTION";
+     }
+   }, 50);
+ }
+
+ function nav(dir) {
+   currentIndex += dir;
+   render(solutions[currentIndex]);
+   updateNav();
+ }
+
+ function updateNav() {
+   document.getElementById('btnPrev').disabled = currentIndex <= 0;
+   document.getElementById('btnNext').disabled = currentIndex >= solutions.length - 1;
+ }
+
+ // --- Solver Logic ---
+
+ function solve(board, remainingCounts, maxR, maxC, history) {
+   if (solutions.length >= MAX_SOLUTIONS) return;
+
+   let sig = getBoardSignature(board);
+   if (history.has(sig)) return;
+   history.add(sig);
+
+   let remainingSum = 0;
+   for(let k in remainingCounts) remainingSum += remainingCounts[k];
+   
+   if (remainingSum === 0) {
+     if (isConnected(board) && isValidBoardState(board)) {
+       addSolutionIfUnique(board);
+     }
+     return;
+   }
+
+   let moves = getPossibleMoves(board, remainingCounts, remainingSum);
+   moves.sort((a, b) => b.tiles.length - a.tiles.length);
+
+   for (let move of moves) {
+     let addedKeys = [];
+     for (let t of move.tiles) {
+       let key = `${t.x},${t.y}`;
+       if (!board.has(key)) {
+         board.set(key, t.val);
+         remainingCounts[t.val]--;
+         addedKeys.push(key);
+       }
+     }
+
+     let b = getBounds(board);
+     let w = b.maxX - b.minX + 1;
+     let h = b.maxY - b.minY + 1;
+
+     if (w <= maxC && h <= maxR && !checkNewBlocks(board, addedKeys)) {
+       solve(board, remainingCounts, maxR, maxC, history);
+     }
+
+     if (solutions.length >= MAX_SOLUTIONS) return;
+
+     for (let key of addedKeys) {
+       let val = board.get(key);
+       board.delete(key);
+       remainingCounts[val]++;
+     }
+   }
+ }
+
+ function getBoardSignature(board) {
+   if (board.size === 0) return "EMPTY";
+   let b = getBounds(board);
+   let str = "";
+   for(let y = b.minY; y <= b.maxY; y++) {
+     for(let x = b.minX; x <= b.maxX; x++) {
+       let v = board.get(`${x},${y}`);
+       str += v ? v + "," : "_,";
+     }
+     str += "|";
+   }
+   return str;
+ }
+
+ function addSolutionIfUnique(board) {
+   let sig = getBoardSignature(board);
+   if (!uniqueSignatures.has(sig)) {
+     uniqueSignatures.add(sig);
+     solutions.push(new Map(board)); 
+   }
+ }
+
+ function getPossibleMoves(board, counts, remainingSum) {
+   let moves = [];
+   let processedMoves = new Set(); 
+   let anchors = [];
+   
+   if (board.size === 0) {
+     anchors.push({x:0, y:0, val: null}); 
+   } else {
+     board.forEach((val, key) => {
+       let [x, y] = key.split(',').map(Number);
+       anchors.push({x, y, val});
+     });
+   }
+
+   const addMove = (seq) => {
+     let id = seq.tiles.map(t => `${t.x},${t.y}:${t.val}`).sort().join('|');
+     if (!processedMoves.has(id)) {
+       processedMoves.add(id);
+       moves.push(seq);
+     }
+   };
+
+   for (let anchor of anchors) {
+     let maxLen = Math.min(13, remainingSum + 1); 
+     ['H', 'V'].forEach(dir => {
+       let dx = dir === 'H' ? 1 : 0;
+       let dy = dir === 'V' ? 1 : 0;
+       for (let len = 3; len <= maxLen + 2; len++) { 
+         if (len > 13) break;
+         for (let offset = 0; offset < len; offset++) {
+           let startX = anchor.x - (offset * dx);
+           let startY = anchor.y - (offset * dy);
+
+           if (anchor.val !== null) {
+             let seq = buildSequence(startX, startY, dx, dy, len, anchor.val, true, counts, board);
+             if (seq) addMove(seq);
+           } else {
+             for(let k in counts) {
+               if(counts[k] > 0) {
+                 let startN = parseInt(k);
+                 if (len >=3) {
+                   let seqF = buildSequence(startX, startY, dx, dy, len, startN, true, counts, board);
+                   if (seqF) addMove(seqF);
+                 }
+                 let seqS = buildSequence(startX, startY, dx, dy, len, startN, false, counts, board);
+                 if (seqS) addMove(seqS);
+               }
+             }
+             break; 
+           }
+           if (anchor.val !== null) {
+             let startVal = anchor.val - offset;
+             if (startVal >= 1 && (startVal + len - 1) <= 13) {
+               let seq = buildSequence(startX, startY, dx, dy, len, startVal, false, counts, board);
+               if (seq) addMove(seq);
+             }
+           }
+         }
+       }
+     });
+     if (anchor.val === null) break;
+   }
+   return moves;
+ }
+
+ function buildSequence(sx, sy, dx, dy, len, startNum, isFlush, counts, board) {
+   let tiles = [];
+   let tempCounts = {...counts};
+   let needed = 0;
+   for (let i = 0; i < len; i++) {
+     let x = sx + (i * dx);
+     let y = sy + (i * dy);
+     let val = isFlush ? startNum : startNum + i;
+     let key = `${x},${y}`;
+     if (board.has(key)) {
+       if (board.get(key) !== val) return null; 
+     } else {
+       if (!tempCounts[val] || tempCounts[val] <= 0) return null;
+       tempCounts[val]--;
+       tiles.push({x, y, val});
+       needed++;
+     }
+   }
+   if (needed === 0) return null; 
+   return { tiles };
+ }
+
+ function checkNewBlocks(board, newKeys) {
+   for(let key of newKeys) {
+     let [x, y] = key.split(',').map(Number);
+     if (hasBlockAt(board, x, y)) return true;
+     if (hasBlockAt(board, x-1, y)) return true;
+     if (hasBlockAt(board, x, y-1)) return true;
+     if (hasBlockAt(board, x-1, y-1)) return true;
+   }
+   return false;
+ }
+
+ function hasBlockAt(board, x, y) {
+   return board.has(`${x},${y}`) && board.has(`${x+1},${y}`) && 
+          board.has(`${x},${y+1}`) && board.has(`${x+1},${y+1}`);
+ }
+
+ function isValidBoardState(board) {
+   let b = getBounds(board);
+   for (let y = b.minY; y <= b.maxY; y++) {
+     let run = [];
+     for (let x = b.minX; x <= b.maxX + 1; x++) { 
+       let val = board.get(`${x},${y}`);
+       if (val !== undefined) run.push(val);
+       else {
+         if (run.length > 0) {
+           if (run.length > 1) {
+             if (run.length < 3) return false;
+             if (!isValidGroup(run)) return false;
+           }
+           run = [];
+         }
+       }
+     }
+   }
+   for (let x = b.minX; x <= b.maxX; x++) {
+     let run = [];
+     for (let y = b.minY; y <= b.maxY + 1; y++) {
+       let val = board.get(`${x},${y}`);
+       if (val !== undefined) run.push(val);
+       else {
+         if (run.length > 0) {
+           if (run.length > 1) {
+             if (run.length < 3) return false;
+             if (!isValidGroup(run)) return false;
+           }
+           run = [];
+         }
+       }
+     }
+   }
+   return true;
+ }
+
+ function isValidGroup(arr) {
+   if (arr.length < 3) return false;
+   if (arr.every(n => n === arr[0])) return true; 
+   for (let i = 0; i < arr.length - 1; i++) {
+     if (arr[i+1] !== arr[i] + 1) return false;
+   }
+   return true;
+ }
+
+ function isConnected(board) {
+   if (board.size === 0) return true;
+   let keys = Array.from(board.keys());
+   let visited = new Set();
+   let queue = [keys[0]];
+   visited.add(keys[0]);
+   while(queue.length > 0) {
+     let curr = queue.pop();
+     let [cx, cy] = curr.split(',').map(Number);
+     [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx, dy]) => {
+       let k = `${cx+dx},${cy+dy}`;
+       if (board.has(k) && !visited.has(k)) {
+         visited.add(k);
+         queue.push(k);
+       }
+     });
+   }
+   return visited.size === board.size;
+ }
+
+ function getBounds(board) {
+   let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+   if (board.size === 0) return {minX:0, maxX:0, minY:0, maxY:0};
+   board.forEach((v, k) => {
+     let [x, y] = k.split(',').map(Number);
+     if(x < minX) minX = x; if(x > maxX) maxX = x;
+     if(y < minY) minY = y; if(y > maxY) maxY = y;
+   });
+   return {minX, maxX, minY, maxY};
+ }
+
+ function render(board) {
+   const gridDiv = document.getElementById('grid');
+   gridDiv.innerHTML = '';
+   if (!board) return;
+
+   let b = getBounds(board);
+   let w = b.maxX - b.minX + 1;
+   let h = b.maxY - b.minY + 1;
+   
+   gridDiv.style.gridTemplateColumns = `repeat(${w}, 50px)`;
+   gridDiv.style.backgroundSize = `50px 50px`; /* align BG grid */
+
+   for (let y = b.minY; y <= b.maxY; y++) {
+     for (let x = b.minX; x <= b.maxX; x++) {
+       let cell = document.createElement('div');
+       let val = board.get(`${x},${y}`);
+       if (val !== undefined) {
+         cell.className = `cell tile card-${formatTile(val)}`;
+         cell.innerText = formatTile(val);
+       } else {
+         cell.className = 'cell';
+       }
+       gridDiv.appendChild(cell);
+     }
+   }
+ }
+</script>
+</body>
+</html>
