@@ -516,8 +516,9 @@ const initGame = () => {
         const roomId = getPartyRoomId();
         const savedHue = localStorage.getItem('rummigrams_lobby_hue');
         if (nameInput) nameInput.value = (localStorage.getItem('rummigrams_name') || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
-        const hue = savedHue !== null && savedHue !== '' ? Math.max(0, Math.min(360, parseInt(savedHue, 10))) : 24;
-        selectedLobbyHue = Number.isNaN(hue) ? 24 : hue;
+        const defaultHue = Math.floor(Math.random() * 360);
+        const hue = savedHue !== null && savedHue !== '' ? Math.max(0, Math.min(360, parseInt(savedHue, 10))) : defaultHue;
+        selectedLobbyHue = Number.isNaN(hue) ? defaultHue : hue;
         selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
         setUserColorVar();
         if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', String((selectedLobbyHue / 360) * 100));
