@@ -163,6 +163,7 @@ const Router = async (path, pop = false) => {
             await window.runPageTransition(oldPage, newPage, isGamePath);
 
             if (oldPage.classList.contains('game') || oldPage.classList.contains('lobby')) {
+                if (path.includes('home')) window.__clearPartyGameOnLeave?.();
                 window.__disposeGame?.();
             }
             oldPage.remove();

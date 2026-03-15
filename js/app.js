@@ -1,7 +1,7 @@
 import { validateBoard } from './engine.js';
 import { toggleTheme, initTheme } from './theme.js';
 import { generateLevel } from './generator.js';
-import { saveGame, loadGame } from './storage.js';
+import { saveGame, loadGame, savePartyGame, loadPartyGame, clearPartyGame } from './storage.js';
 import {
     renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, renderGridCells,
     initParticleBurstSystem, createCellParticleBurst, triggerVictory, createConfetti, repositionPlacedTiles, initRackTransition, cleanupParticleBurstSystem
@@ -43,11 +43,11 @@ const state = {
 
 const $ = id => document.getElementById(id);
 
-const LOBBY_COLOR_SAT = 62;
+const LOBBY_COLOR_SAT = 30;
 const LOBBY_COLOR_LIGHT = 48;
-const MAX_PLAYER_NAME_LEN = 20;
+const MAX_PLAYER_NAME_LEN = 40;
 const LOBBY_GHOST_SLOTS = 3;
-const getLobbyName = () => (nameInput?.value || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
+const getLobbyName = () => (nameInput?.value || '').trim();
 
 const appendLobbyGhostSlots = (count = LOBBY_GHOST_SLOTS) => {
     if (!playerListEl) return;
@@ -70,7 +70,7 @@ const hslToHex = (h, s, l) => {
 };
 
 let gridEl, rackEl, themeBtn;
-let lobbyEl, nameInput, playerListEl, startBtn, lobbyWaitEl, lobbyHueTrack, lobbyHueSliderWrap;
+let lobbyEl, nameInput, playerListEl, startBtn, lobbyWaitEl, joinBtn, lobbyHueTrack, lobbyHueSliderWrap;
 let selectedLobbyHue = 24;
 let selectedLobbyColor = hslToHex(24, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
 let currentPhase = 'game';
@@ -91,18 +91,91 @@ function randomizeLobbyName() {
 
 const buildValueGrid = () => new Map([...state.grid].map(([pos, id]) => [pos, state.tiles.get(id)]));
 
+const calcRemainingFromBoard = board => {
+            if (!board?.tiles) return null;
+            const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
+            const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
+            const gridMap = new Map(gridEntries);
+            const tilesMap = new Map(tilesEntries);
+            const total = tilesMap.size;
+            if (total === 0) return { remaining: 0, total: 0 };
+            const valueGrid = new Map();
+            for (const [pos, id] of gridMap) {
+                const v = tilesMap.get(id);
+                if (v != null) valueGrid.set(pos, v);
+            }
+            const validation = validateBoard(valueGrid);
+            let inValid = 0;
+            for (const [pos] of gridMap) {
+                if (validation.validPositions.has(pos)) inValid++;
+            }
+            return { remaining: total - inValid, total };
+        };
+
 let partyConnection = null;
 let myServerId = null;
 let isHost = false;
 let gamePage = null;
 let renderHeaderPlayerDiamondsFn = null;
 let lastLobbyState = null;
+let roomTabChannel = null;
+let roomTabClaimInterval = null;
+let roomTabClaimRoomId = null;
+
+const ROOM_CHAN = (id) => `rummigrams-room-${id}`;
+const ROOM_ACTIVE_KEY = (id) => `rummigrams_room_${id}_active`;
+const ROOM_CLAIM_MS = 1000;
+
+const setRoomActive = (id, value) => {
+    const k = ROOM_ACTIVE_KEY(id);
+    try {
+        if (value != null && value !== '') { localStorage.setItem(k, String(value)); sessionStorage.setItem(k, '1'); }
+        else { localStorage.removeItem(k); sessionStorage.removeItem(k); }
+    } catch (_) {}
+};
+let _unloadClaimGuardRegistered = false;
+const startRoomTabClaim = (roomId) => {
+    if (!roomId) return;
+    roomTabClaimRoomId = roomId;
+    const writeActive = () => setRoomActive(roomId, String(Date.now()));
+    writeActive();
+    if (roomTabClaimInterval) clearInterval(roomTabClaimInterval);
+    roomTabClaimInterval = setInterval(writeActive, ROOM_CLAIM_MS);
+    if (!_unloadClaimGuardRegistered) {
+        _unloadClaimGuardRegistered = true;
+        const stopClaiming = () => {
+            window.__roomTabUnloading = true;
+            if (roomTabClaimInterval) { clearInterval(roomTabClaimInterval); roomTabClaimInterval = null; }
+            if (roomTabChannel) { try { roomTabChannel.close(); } catch (_) {} roomTabChannel = null; }
+        };
+        window.addEventListener('beforeunload', stopClaiming);
+        window.addEventListener('pagehide', stopClaiming);
+    }
+    if (typeof BroadcastChannel === 'undefined') return;
+    if (roomTabChannel) try { roomTabChannel.close(); } catch (_) {}
+    roomTabChannel = new BroadcastChannel(ROOM_CHAN(roomId));
+    const claim = () => {
+        if (window.__roomTabUnloading) return;
+        roomTabChannel?.postMessage({ type: 'claim', roomId });
+        writeActive();
+    };
+    claim();
+    roomTabChannel.onmessage = (e) => {
+        if (e.data?.type === 'ping' && e.data.roomId === roomId) claim();
+    };
+};
 
 const saveState = () => {
+    if (isMultiplayer() && currentPhase === 'game') {
+        const id = getPartyRoomId();
+        if (id) savePartyGame(id, state, getLobbyName(), selectedLobbyColor, selectedLobbyHue);
+    }
     if (!isMultiplayer()) saveGame(state);
 };
 
 let partyBoardSyncTimer = null;
+let partyBoardSyncInterval = null;
+const PARTY_BOARD_SYNC_MS = 2000;
 const serializeBoardForParty = () => ({
     gridSize: state.level.gridSize,
     grid: [...state.grid.entries()],
@@ -118,10 +191,24 @@ const schedulePartyBoardSync = () => {
     clearTimeout(partyBoardSyncTimer);
     partyBoardSyncTimer = setTimeout(sendPartyBoardStateNow, 150);
 };
+const startPartyBoardSyncInterval = () => {
+    stopPartyBoardSyncInterval();
+    if (!isMultiplayer() || !partyConnection?.ready) return;
+    setTimeout(sendPartyBoardStateNow, 400);
+    partyBoardSyncInterval = setInterval(sendPartyBoardStateNow, PARTY_BOARD_SYNC_MS);
+};
+const stopPartyBoardSyncInterval = () => {
+    if (partyBoardSyncInterval) {
+        clearInterval(partyBoardSyncInterval);
+        partyBoardSyncInterval = null;
+    }
+};
 
 const startPartyGame = () => {
     if (currentPhase !== 'lobby') return;
     currentPhase = 'transitioning';
+    const myBoard = lastLobbyState?.boards?.[myServerId];
+    if (myBoard?.gridSize != null) state.level.gridSize = myBoard.gridSize;
     newGame();
     runPartyLobbyToGameTransition();
 };
@@ -129,6 +216,8 @@ const startPartyGame = () => {
 const runPartyLobbyToGameTransition = async () => {
     const lobbyPage = document.querySelector('.page.lobby');
     if (!lobbyPage || !gamePage) { currentPhase = 'game'; return; }
+    const rid = getPartyRoomId();
+    if (rid) setRoomActive(rid, String(Date.now()));
 
     gamePage.querySelector('.game-container')?.style.removeProperty('display');
     gamePage.querySelector('.controls-bar')?.style.removeProperty('display');
@@ -142,8 +231,27 @@ const runPartyLobbyToGameTransition = async () => {
     gamePage.style.transform = '';
     gamePage = null;
     currentPhase = 'game';
+    const roomId = getPartyRoomId();
+    if (roomId) savePartyGame(roomId, state, getLobbyName(), selectedLobbyColor, selectedLobbyHue);
     sendPartyBoardStateNow();
+    startPartyBoardSyncInterval();
     if (lastLobbyState?.started) renderHeaderPlayerDiamondsFn?.(lastLobbyState);
+    window.__clearPartyGameOnLeave = () => { const id = getPartyRoomId(); if (id) clearPartyGame(id); };
+    startRoomTabClaim(roomId);
+};
+
+const runRejoinFlow = (roomId) => {
+    const saved = loadPartyGame(roomId);
+    if (!saved || !partyConnection?.ready || !gamePage) return;
+    if (nameInput) nameInput.value = saved.name ?? '';
+    selectedLobbyColor = saved.color ?? selectedLobbyColor;
+    if (saved.hue != null) selectedLobbyHue = saved.hue;
+    document.documentElement.style.setProperty('--user-color', selectedLobbyColor);
+    if (lobbyHueTrack) lobbyHueTrack.setAttribute('aria-valuenow', String(selectedLobbyHue));
+    if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', `${(selectedLobbyHue / 360) * 100}%`);
+    applySavedStateAndRender(saved);
+    partyConnection.join(saved.name ?? '', selectedLobbyColor);
+    runPartyLobbyToGameTransition();
 };
 
 const setPhase = phase => {
@@ -211,6 +319,7 @@ const runValidation = () => {
     if (!grid.size) {
         state.validation = null;
         updateRemainingCounter(state.tiles.size);
+        if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
         return;
     }
 
@@ -221,12 +330,14 @@ const runValidation = () => {
     if (!state.hand.size && remaining === 0 && state.validation.valid) return handleVictory();
 
     updateRemainingCounter(remaining);
+    if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
 };
 
 const handleVictory = () => {
     state.isVictory = true;
     saveState();
     updateRemainingCounter(0, true);
+    if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
     triggerVictory(gridEl);
     if (partyConnection?.ready) partyConnection.completeBoard();
     setTimeout(() => createConfetti(40), 300);
@@ -310,28 +421,21 @@ const newGame = () => {
     saveState();
 };
 
-const loadSavedGame = () => {
-    const saved = loadGame();
-    if (!saved) return false;
-
+const applySavedStateAndRender = (saved) => {
     state.grid = saved.grid;
     state.tiles = saved.tiles;
     state.hand = saved.hand;
     state.isVictory = saved.isVictory;
     state.level.gridSize = saved.gridSize;
     state.validation = null;
-
     renderGridCells(gridEl, state.level.gridSize, state.level.gridSize);
     if (!particleBurstInitialized) { initParticleBurstSystem(gridEl); particleBurstInitialized = true; }
-
     renderRack(rackEl, state.tiles, state.hand);
-
     state.grid.forEach((id, pos) => {
         const [x, y] = pos.split(',').map(Number);
         const value = state.tiles.get(id);
         const existing = $(id);
         if (existing) existing.remove();
-
         const tile = document.createElement('div');
         tile.id = id;
         tile.className = 'tile tile--placed';
@@ -344,12 +448,17 @@ const loadSavedGame = () => {
         gridEl.appendChild(tile);
         positionTileOnGrid(tile, x, y, gridEl);
     });
-
     runValidation();
     if (state.isVictory) {
         updateRemainingCounter(0, true);
         triggerVictory(gridEl);
     }
+};
+
+const loadSavedGame = () => {
+    const saved = loadGame();
+    if (!saved) return false;
+    applySavedStateAndRender(saved);
     return true;
 };
 
@@ -358,8 +467,15 @@ let cleanupFns = [];
 const disposeGame = () => {
     clearTimeout(partyBoardSyncTimer);
     partyBoardSyncTimer = null;
+    stopPartyBoardSyncInterval();
     renderHeaderPlayerDiamondsFn = null;
     lastLobbyState = null;
+    delete window.__clearPartyGameOnLeave;
+    if (roomTabClaimInterval) clearInterval(roomTabClaimInterval);
+    roomTabClaimInterval = null;
+    if (roomTabChannel) try { roomTabChannel.close(); roomTabChannel = null; } catch (_) {}
+    if (roomTabClaimRoomId) setRoomActive(roomTabClaimRoomId, null);
+    roomTabClaimRoomId = null;
     if (gamePage?.parentNode) { gamePage.remove(); gamePage = null; }
     if (partyConnection?.close) {
         partyConnection.close();
@@ -383,6 +499,7 @@ const initGame = () => {
     playerListEl = $('lobby-players');
     startBtn = $('lobby-start');
     lobbyWaitEl = $('lobby-wait');
+    joinBtn = $('lobby-join-game');
     lobbyHueTrack = $('lobby-hue-track');
     lobbyHueSliderWrap = $('lobby-hue-slider-wrap');
 
@@ -491,6 +608,11 @@ const initGame = () => {
             const gameSlide = document.createElement('div');
             gameSlide.className = 'page-slide';
             gameSlide.appendChild(app);
+            const playerBoardOverlay = pageSlide.querySelector('.player-board-dialog-overlay');
+            if (playerBoardOverlay) {
+                playerBoardOverlay.remove();
+                gamePage.appendChild(playerBoardOverlay);
+            }
             gamePage.appendChild(gameSlide);
 
             const infoOverlay = lobbyPage.querySelector(':scope > .info-dialog-overlay');
@@ -509,11 +631,133 @@ const initGame = () => {
             window.__onRouteSettled.push(() => {
                 if (gamePage) document.body.appendChild(gamePage);
             });
+            window.__lobbyRouteSettled = false;
+            window.__onRouteSettled.push(() => {
+                window.__lobbyRouteSettled = true;
+            });
         }
 
+        const roomId = getPartyRoomId();
+        let otherTabHasRoom = false;
+        // #region agent log
+        const _dbg = (msg, data, hyp) => {
+            const entry = { t: Date.now(), msg, data: data || {}, hyp };
+            (window.__debugLogs = window.__debugLogs || []).push(entry);
+            console.log('[Rummigrams]', entry.msg, entry.data, entry.hyp);
+            fetch('http://127.0.0.1:7664/ingest/2823e43f-3e83-4ff4-b7a7-694239d96d09',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'67052c'},body:JSON.stringify({sessionId:'67052c',location:'app.js:multi',message:msg,data:data||{},hypothesisId:hyp,timestamp:Date.now()})}).catch(()=>{});
+        };
+        // #endregion
+        const showAlreadyOpenUI = (source) => {
+            _dbg('showAlreadyOpenUI', { source }, 'trigger');
+            if (lobbyEl) lobbyEl.classList.add('lobby--blocked');
+            const lobbyMain = document.querySelector('.lobby-main');
+            if (lobbyMain) lobbyMain.classList.add('lobby--blocked');
+            const card = document.querySelector('.lobby-card');
+            const shareWrap = document.getElementById('lobby-share-wrap');
+            const msg = document.getElementById('lobby-already-joined-msg');
+            if (card) card.style.display = 'none';
+            if (shareWrap) shareWrap.style.display = 'none';
+            if (msg) {
+                msg.textContent = "You've already joined.";
+                msg.style.display = '';
+            }
+        };
+        const doneClaimCheck = () => {
+            _dbg('doneClaimCheck', { otherTabHasRoom }, 'D');
+            if (otherTabHasRoom) showAlreadyOpenUI('doneClaimCheck');
+            else runLobbyInit();
+        };
+        const BC_WAIT_MS = 200;
+        const BC_PING_DELAY_MS = 180;
+        const runPingAndWait = () => {
+            if (typeof BroadcastChannel !== 'undefined' && roomId) {
+                const ch = new BroadcastChannel(ROOM_CHAN(roomId));
+                ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) otherTabHasRoom = true; };
+                ch.postMessage({ type: 'ping', roomId });
+                setTimeout(() => { ch.close(); doneClaimCheck(); }, BC_WAIT_MS);
+            } else {
+                doneClaimCheck();
+            }
+        };
+        const hasSavedState = !!loadPartyGame(roomId);
+        _dbg('initial branch', { hasSavedState, roomId: roomId || null }, 'E');
+        if (hasSavedState) {
+            doneClaimCheck();
+        } else {
+            setTimeout(runPingAndWait, BC_PING_DELAY_MS);
+        }
+        function runLobbyInit() {
+        const tabToken = Math.random().toString(36).slice(2) + Date.now();
+        if (roomId) setRoomActive(roomId, tabToken);
+        const isReconnect = !!loadPartyGame(roomId);
+        setTimeout(() => {
+            const keyVal = roomId ? localStorage.getItem(ROOM_ACTIVE_KEY(roomId)) : null;
+            const held = isReconnect || (roomId && keyVal === tabToken);
+            _dbg('token check', { isReconnect, held, keyMatchesToken: keyVal === tabToken }, 'A');
+            if (!held) { showAlreadyOpenUI('tokenCheck'); return; }
+            runLobbyInitRest();
+        }, 80);
+        function runLobbyInitRest() {
+        let rejoining = !!loadPartyGame(roomId);
+        if (!rejoining) startRoomTabClaim(roomId);
         currentPhase = 'lobby';
         myServerId = null;
-        const roomId = getPartyRoomId();
+        let rejoinCheckDone = false;
+        let pendingRejoinState = null;
+        const showAlreadyOpenWithClose = () => {
+            _dbg('showAlreadyOpenWithClose', {}, 'B');
+            if (partyConnection?.close) { partyConnection.close(); partyConnection = null; }
+            showAlreadyOpenUI('rejoinBC');
+        };
+        const maybeRunRejoin = () => {
+            if (!rejoinCheckDone || otherTabHasRoom) {
+                if (otherTabHasRoom && pendingRejoinState) showAlreadyOpenWithClose();
+                return;
+            }
+            if (pendingRejoinState) {
+                const rid = pendingRejoinState;
+                pendingRejoinState = null;
+                lastLobbyState = lastLobbyState || { started: true, boards: {} };
+                runRejoinFlow(rid);
+            }
+        };
+        if (rejoining) {
+            if (startBtn) startBtn.style.display = 'none';
+            if (lobbyWaitEl) lobbyWaitEl.style.display = 'none';
+            if (joinBtn) joinBtn.style.display = 'none';
+            const rec = $('lobby-reconnecting');
+            if (rec) rec.style.display = '';
+            const REJOIN_BC_DELAY_MS = 400;
+            const runRejoinBC = () => {
+                if (typeof BroadcastChannel !== 'undefined' && roomId) {
+                    const ch = new BroadcastChannel(ROOM_CHAN(roomId));
+                    ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) { _dbg('rejoin BC claim', {}, 'B'); otherTabHasRoom = true; } };
+                    ch.postMessage({ type: 'ping', roomId });
+                    setTimeout(() => {
+                        ch.close();
+                        rejoinCheckDone = true;
+                        _dbg('rejoin BC done', { otherTabHasRoom }, 'B');
+                        if (otherTabHasRoom) showAlreadyOpenWithClose();
+                        else {
+                            initPartyConnection();
+                            pendingRejoinState = roomId;
+                            if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
+                            else { startRoomTabClaim(roomId); maybeRunRejoin(); }
+                        }
+                    }, 350);
+                } else {
+                    rejoinCheckDone = true;
+                    if (otherTabHasRoom) showAlreadyOpenWithClose();
+                    else {
+                        initPartyConnection();
+                        pendingRejoinState = roomId;
+                        if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
+                        else { startRoomTabClaim(roomId); maybeRunRejoin(); }
+                    }
+                }
+            };
+            setTimeout(runRejoinBC, REJOIN_BC_DELAY_MS);
+        }
         const savedHue = localStorage.getItem('rummigrams_lobby_hue');
         if (nameInput) nameInput.value = (localStorage.getItem('rummigrams_name') || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
         const defaultHue = Math.floor(Math.random() * 360);
@@ -657,27 +901,66 @@ const initGame = () => {
                 return;
             }
             const players = serverState.players || {};
+            const boards = serverState.boards || {};
             const order = serverState.joinOrder || Object.keys(players).sort();
-            headerPlayers.innerHTML = '';
             headerPlayers.removeAttribute('aria-hidden');
+            const existing = new Map([...headerPlayers.querySelectorAll('.header-player')].map(el => [el.dataset.playerId, el]));
             order.forEach((id, i) => {
                 const p = players[id];
                 if (!p) return;
                 const raw = /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : '#64748b';
                 const color = muteForDiamond(raw);
-                const name = (p.name && String(p.name).trim()) || '';
+                const serverNameForPlayer = (p.name && String(p.name).trim()) || '';
+                const name = (id === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
                 const initial = name ? name[0].toUpperCase() : String(i + 1);
                 const label = name || `Player ${['One', 'Two', 'Three'][i] ?? i + 1}`;
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'header-player-diamond';
-                btn.style.setProperty('--diamond-color', color);
-                btn.setAttribute('aria-label', `${label} board`);
-                btn.dataset.playerId = id;
-                btn.innerHTML = `<span>${initial}</span>`;
-                btn.addEventListener('click', () => openPlayerBoardDialog(id));
+                let remaining = 0, total = 0;
+                if (id === myServerId && state?.tiles?.size != null && state?.validation?.validPositions != null) {
+                    remaining = calcRemainingTiles(state, state.validation.validPositions);
+                    total = state.tiles.size;
+                } else {
+                    const r = calcRemainingFromBoard(boards[id]);
+                    if (r) { remaining = r.remaining; total = r.total; }
+                }
+                const progress = total > 0 ? Math.min(100, Math.round(((total - remaining) / total) * 100)) : 0;
+                const setProgress = (el, pct) => { if (el) el.style.setProperty('--progress', String(pct)); };
+                const animateProgress = (el, toPct, duration = 280) => {
+                    if (!el) return;
+                    const fromPct = parseFloat(el.style.getPropertyValue('--progress')) || 0;
+                    if (Math.abs(fromPct - toPct) < 0.5) { setProgress(el, toPct); return; }
+                    const start = performance.now();
+                    const easeOutQuart = t => 1 - (1 - t) ** 4;
+                    const tick = () => {
+                        const elapsed = performance.now() - start;
+                        const t = Math.min(1, elapsed / duration);
+                        setProgress(el, fromPct + (toPct - fromPct) * easeOutQuart(t));
+                        if (t < 1) requestAnimationFrame(tick);
+                    };
+                    requestAnimationFrame(tick);
+                };
+                let btn = existing.get(id);
+                if (btn) {
+                    existing.delete(id);
+                    btn.style.setProperty('--player-color', color);
+                    btn.setAttribute('aria-label', `${label} board`);
+                    const initEl = btn.querySelector('.header-player-initial');
+                    if (initEl) initEl.textContent = initial;
+                    animateProgress(btn, progress);
+                } else {
+                    btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'header-player';
+                    btn.style.setProperty('--player-color', color);
+                    btn.style.setProperty('--progress', String(progress));
+                    btn.setAttribute('aria-label', `${label} board`);
+                    btn.dataset.playerId = id;
+                    btn.innerHTML = `<span class="header-player-initial">${initial}</span>`;
+                    btn.addEventListener('click', () => openPlayerBoardDialog(id));
+                    setProgress(btn, progress);
+                }
                 headerPlayers.appendChild(btn);
             });
+            existing.forEach(btn => btn.remove());
         };
         renderHeaderPlayerDiamondsFn = renderHeaderPlayerDiamonds;
 
@@ -685,35 +968,60 @@ const initGame = () => {
             const overlay = document.getElementById('player-board-dialog-overlay');
             const titleEl = document.getElementById('player-board-dialog-title');
             const contentEl = document.getElementById('player-board-dialog-content');
+            const headerEl = document.getElementById('player-board-dialog-header');
             if (!overlay || !titleEl || !contentEl) return;
             const players = lastLobbyState?.players || {};
             const boards = lastLobbyState?.boards || {};
             const order = lastLobbyState?.joinOrder || Object.keys(players).sort();
+            headerEl?.classList.toggle('player-board-dialog-header--multi', order.length > 1);
             const p = players[playerId];
-            const name = (p?.name && String(p.name).trim()) || '';
+            const serverNameForPlayer = (p?.name && String(p.name).trim()) || '';
+            const name = (playerId === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
             const i = order.indexOf(playerId);
             const label = name || `Player ${['One', 'Two', 'Three'][i] ?? (i >= 0 ? i + 1 : 1)}`;
             titleEl.textContent = label;
-            const board = boards[playerId];
+            let board = boards[playerId];
+            if ((!board || !board.gridSize) && playerId === myServerId) {
+                board = {
+                    gridSize: state.level.gridSize,
+                    grid: [...state.grid.entries()],
+                    hand: [...state.hand],
+                    tiles: [...state.tiles.entries()]
+                };
+            }
             if (!board || !board.gridSize) {
                 contentEl.innerHTML = '<p class="player-board-mini-label">No board data yet</p>';
             } else {
-                const tilesMap = new Map(board.tiles || []);
-                const gridMap = new Map(board.grid || []);
+                const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
+                const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
+                const tilesMap = new Map(tilesEntries);
+                const gridMap = new Map(gridEntries);
                 const hand = board.hand || [];
                 const size = board.gridSize;
-                let html = '<div class="player-board-mini-label">Board</div>';
+                const valueGrid = new Map();
+                for (const [pos, tileId] of gridMap) {
+                    const v = tilesMap.get(tileId);
+                    if (v != null) valueGrid.set(pos, v);
+                }
+                const validation = valueGrid.size ? validateBoard(valueGrid) : null;
+                const tileClass = (pos) => {
+                    if (!validation) return 'player-board-mini-tile';
+                    if (validation.validPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--valid';
+                    if (validation.blockPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--block-error';
+                    if (validation.impossiblePositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--impossible';
+                    return 'player-board-mini-tile';
+                };
+                let html = '';
                 html += `<div class="player-board-mini-grid" style="grid-template-columns: repeat(${size}, 1.5rem); grid-template-rows: repeat(${size}, 1.5rem);">`;
                 for (let y = 0; y < size; y++) {
                     for (let x = 0; x < size; x++) {
                         const pos = `${x},${y}`;
                         const tileId = gridMap.get(pos);
                         const val = tileId != null ? tilesMap.get(tileId) : null;
-                        html += `<div class="player-board-mini-cell">${val != null ? `<span class="player-board-mini-tile">${formatTileValue(val)}</span>` : ''}</div>`;
+                        html += `<div class="player-board-mini-cell">${val != null ? `<span class="${tileClass(pos)}">${formatTileValue(val)}</span>` : ''}</div>`;
                     }
                 }
                 html += '</div>';
-                html += '<div class="player-board-mini-label">Hand</div>';
                 html += '<div class="player-board-mini-rack">';
                 hand.forEach(id => {
                     const v = tilesMap.get(id);
@@ -725,6 +1033,29 @@ const initGame = () => {
             overlay.dataset.viewingPlayerId = playerId;
             overlay.classList.add('open');
         };
+
+        const prevBtn = gamePage.querySelector('#player-board-dialog-prev');
+        const nextBtn = gamePage.querySelector('#player-board-dialog-next');
+        if (prevBtn) prevBtn.addEventListener('click', () => {
+            const overlay = document.getElementById('player-board-dialog-overlay');
+            if (!overlay?.classList.contains('open')) return;
+            const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
+            if (order.length <= 1) return;
+            const current = overlay.dataset.viewingPlayerId;
+            const i = order.indexOf(current);
+            const prevId = order[(i - 1 + order.length) % order.length];
+            openPlayerBoardDialog(prevId);
+        });
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+            const overlay = document.getElementById('player-board-dialog-overlay');
+            if (!overlay?.classList.contains('open')) return;
+            const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
+            if (order.length <= 1) return;
+            const current = overlay.dataset.viewingPlayerId;
+            const i = order.indexOf(current);
+            const nextId = order[(i + 1) % order.length];
+            openPlayerBoardDialog(nextId);
+        });
 
         closePlayerBoardDialog = () => {
             const overlay = document.getElementById('player-board-dialog-overlay');
@@ -767,57 +1098,82 @@ const initGame = () => {
                 const disabled = !isHost || !Object.keys(players).length || !!serverState.started;
                 startBtn.disabled = disabled;
                 startBtn.setAttribute('aria-disabled', String(disabled));
-                startBtn.style.display = isHost ? '' : 'none';
+                startBtn.style.display = serverState.started ? 'none' : (isHost ? '' : 'none');
             }
-            if (lobbyWaitEl) lobbyWaitEl.style.display = isHost ? 'none' : '';
-            if (serverState.started) startPartyGame();
+            if (lobbyWaitEl) lobbyWaitEl.style.display = (serverState.started || isHost) ? 'none' : '';
+            if (joinBtn) {
+                const canJoin = serverState.started && !serverState.boards?.[myServerId];
+                joinBtn.style.display = canJoin ? '' : 'none';
+                joinBtn.disabled = !canJoin;
+                joinBtn.setAttribute('aria-disabled', String(!canJoin));
+            }
+            if (serverState.started && serverState.boards?.[myServerId]) startPartyGame();
         };
 
-        window.__lobbyRouteSettled = false;
         window.__pendingLobbyState = null;
-        partyConnection = createPartyConnection((serverState, myId) => {
-            if (myId && !myServerId) myServerId = myId;
-            if (!myServerId && serverState.players && Object.keys(serverState.players).length === 1)
-                myServerId = Object.keys(serverState.players)[0];
-            lastLobbyState = serverState;
-            if (currentPhase === 'game') {
-                if (serverState.started) renderHeaderPlayerDiamonds(serverState);
-                const openOverlay = document.getElementById('player-board-dialog-overlay');
-                if (openOverlay?.classList.contains('open')) {
-                    const openId = openOverlay.dataset.viewingPlayerId;
-                    if (openId) openPlayerBoardDialog(openId);
-                }
-                return;
-            }
-            if (creatorShownOptimistic && serverState.players) {
-                const ids = Object.keys(serverState.players);
-                const only = ids.length === 1 && serverState.players[ids[0]];
-                if (ids.length === 1 && only && only.name == null && only.color == null) {
-                    if (serverState.started) startPartyGame();
+        const initPartyConnection = () => {
+            if (partyConnection) return;
+            partyConnection = createPartyConnection((serverState, myId) => {
+                if (serverState?.rejected) {
+                    _dbg('server rejected', {}, 'C');
+                    showAlreadyOpenUI('serverRejected');
+                    if (partyConnection) { partyConnection.close(); partyConnection = null; }
                     return;
                 }
-                creatorShownOptimistic = false;
-            }
-            if (!window.__lobbyRouteSettled) {
-                window.__pendingLobbyState = serverState;
-                return;
-            }
-            renderLobby(serverState);
-        });
-        window.__onRouteSettled = (window.__onRouteSettled || []);
-        window.__onRouteSettled.push(() => {
-            window.__lobbyRouteSettled = true;
-            if (window.__pendingLobbyState) {
-                renderLobby(window.__pendingLobbyState);
-                window.__pendingLobbyState = null;
-            }
-            if (!hasAutoFocusedLobbyName && nameInput) {
-                hasAutoFocusedLobbyName = true;
-                nameInput.focus();
-            }
-        });
-
-        if (partyConnection) {
+                if (myId && !myServerId) myServerId = myId;
+                if (!myServerId && serverState.players && Object.keys(serverState.players).length === 1)
+                    myServerId = Object.keys(serverState.players)[0];
+                const mergedBoards = { ...(lastLobbyState?.boards || {}), ...(serverState.boards || {}) };
+                lastLobbyState = { ...serverState, boards: mergedBoards };
+                if (currentPhase === 'game') {
+                    if (serverState.started) renderHeaderPlayerDiamonds(serverState);
+                    const openOverlay = document.getElementById('player-board-dialog-overlay');
+                    if (openOverlay?.classList.contains('open')) {
+                        const openId = openOverlay.dataset.viewingPlayerId;
+                        if (openId) openPlayerBoardDialog(openId);
+                    }
+                    return;
+                }
+                if (rejoining && window.__lobbyRouteSettled && serverState.started) {
+                    rejoining = false;
+                    pendingRejoinState = roomId;
+                    maybeRunRejoin();
+                    return;
+                }
+                if (creatorShownOptimistic && serverState.players) {
+                    const ids = Object.keys(serverState.players);
+                    const only = ids.length === 1 && serverState.players[ids[0]];
+                    if (ids.length === 1 && only && only.name == null && only.color == null) {
+                        if (serverState.started) startPartyGame();
+                        return;
+                    }
+                    creatorShownOptimistic = false;
+                }
+                if (!window.__lobbyRouteSettled) {
+                    window.__pendingLobbyState = serverState;
+                    return;
+                }
+                renderLobby(serverState);
+            }, () => !!sessionStorage.getItem(ROOM_ACTIVE_KEY(roomId)));
+            window.__onRouteSettled = (window.__onRouteSettled || []);
+            window.__onRouteSettled.push(() => {
+                window.__lobbyRouteSettled = true;
+                const pending = window.__pendingLobbyState;
+                if (rejoining && pending?.started) {
+                    lastLobbyState = { ...pending, boards: pending.boards || {} };
+                    rejoining = false;
+                    window.__pendingLobbyState = null;
+                    pendingRejoinState = roomId;
+                    maybeRunRejoin();
+                } else if (pending) {
+                    renderLobby(pending);
+                    window.__pendingLobbyState = null;
+                }
+                if (!hasAutoFocusedLobbyName && nameInput && !rejoining) {
+                    hasAutoFocusedLobbyName = true;
+                    nameInput.focus();
+                }
+            });
             const sendJoin = () => {
                 const name = getLobbyName();
                 localStorage.setItem('rummigrams_name', name);
@@ -842,11 +1198,18 @@ const initGame = () => {
             });
             if (startBtn) startBtn.addEventListener('click', () => {
                 if (partyConnection?.ready && isHost) {
-                    partyConnection.startGame();
+                    loadSettings();
+                    partyConnection.startGame(state.level.gridSize);
                     startPartyGame();
                 }
             });
-        }
+            if (joinBtn) joinBtn.addEventListener('click', () => {
+                if (partyConnection?.ready) partyConnection.joinGame();
+            });
+        };
+        if (!rejoining) initPartyConnection();
+        } // runLobbyInitRest
+        } // runLobbyInit
     } else if (!forceNewGame && loadSavedGame()) {
         setPhase('game');
     } else {

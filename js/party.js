@@ -1,19 +1,37 @@
 const getRoomId = () => new URLSearchParams(location.search).get('room') || null;
 
+const SESSION_KEY = "rummigrams_session_id";
+const getOrCreateSessionId = () => {
+  let s = null;
+  try { s = localStorage.getItem(SESSION_KEY); } catch (_) {}
+  if (!s) {
+    s = Math.random().toString(36).slice(2) + Date.now();
+    try { localStorage.setItem(SESSION_KEY, s); } catch (_) {}
+  }
+  return s;
+};
+
 const PARTYKIT_URL = "wss://rummigrams.dpbarry.partykit.dev";
 
 export const isMultiplayer = () => !!getRoomId();
 
 export const getPartyRoomId = getRoomId;
 
-export const createPartyConnection = (onState) => {
+const ROOM_ACTIVE_KEY = (id) => `rummigrams_room_${id}_active`;
+
+export const createPartyConnection = (onState, getPrimary = () => false) => {
   const roomId = getRoomId();
   if (!roomId) return null;
 
   const ws = new WebSocket(`${PARTYKIT_URL}/party/${roomId}`);
   let myId = null;
+  const sessionId = getOrCreateSessionId();
 
   ws.onopen = () => {
+    try {
+      const primary = getPrimary();
+      ws.send(JSON.stringify({ type: "SESSION", data: { sessionId, primary } }));
+    } catch (_) {}
     console.log("Connected to room:", roomId);
   };
 
@@ -35,14 +53,17 @@ export const createPartyConnection = (onState) => {
     join(name, color) {
       send("JOIN", { name, color });
     },
-    startGame() {
-      send("START_GAME");
+    startGame(gridSize) {
+      send("START_GAME", gridSize != null ? { gridSize } : {});
     },
     completeBoard() {
       send("COMPLETE_BOARD");
     },
     sendBoardState(data) {
       send("BOARD_STATE", data);
+    },
+    joinGame() {
+      send("JOIN_GAME", {});
     },
     close() {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
