@@ -70,7 +70,6 @@ const setTransitioning = v => {
     if (!v) {
         const cbs = window.__onRouteSettled;
         window.__onRouteSettled = null;
-        if (cbs && cbs.length) console.warn('[Rummigrams Lobby] R5 setTransitioning(false)', 'calling', cbs.length, '__onRouteSettled callback(s)');
         if (cbs) cbs.forEach(fn => fn());
     }
 };
@@ -110,7 +109,6 @@ const Router = async (path, pop = false) => {
         const isGamePath = path.includes('game');
         const isLobby = isGamePath && (hasRoom || !!new URLSearchParams(location.search).get('room'));
         const pageType = isLobby ? 'lobby' : (isGamePath ? 'game' : 'home');
-        if (isLobby) console.warn('[Rummigrams Lobby] R1 Router', 'path=' + path, 'pageType=lobby', 'hasRoom=' + hasRoom);
 
         delete window.__pageReady;
         showProgress();
@@ -141,9 +139,7 @@ const Router = async (path, pop = false) => {
         document.body.appendChild(newPage);
         if (progressBar) document.body.appendChild(progressBar);
 
-        const scripts = [...newPage.querySelectorAll('script')];
-        if (isLobby) console.warn('[Rummigrams Lobby] R2 Router', 'about to run', scripts.length, 'script(s) from game.html');
-        for (const oldScript of scripts) {
+        for (const oldScript of [...newPage.querySelectorAll('script')]) {
             const script = document.createElement('script');
             if (oldScript.src) script.src = oldScript.src;
             else script.textContent = oldScript.textContent;
@@ -162,11 +158,9 @@ const Router = async (path, pop = false) => {
         delete window.__pageReady;
 
         completeProgress();
-        if (isLobby) console.warn('[Rummigrams Lobby] R3 Router', 'pageReady done, running transition');
 
         if (oldPage) {
             await window.runPageTransition(oldPage, newPage, isGamePath);
-            if (isLobby) console.warn('[Rummigrams Lobby] R4 Router', 'transition done, about to setTransitioning(false) -> __onRouteSettled');
 
             if (oldPage.classList.contains('game') || oldPage.classList.contains('lobby')) {
                 if (path.includes('home')) window.__clearPartyGameOnLeave?.();

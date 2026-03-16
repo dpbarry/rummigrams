@@ -31,7 +31,6 @@
             const params = new URLSearchParams(location.search);
             const roomId = params.get('room');
             if (roomId) {
-                console.warn('[Rummigrams Lobby] R0 index', 'room=' + roomId, '-> Router(game.html)');
                 history.replaceState({ loc: 'game.html', room: roomId }, '', location.href);
                 Router('game.html', true);
             } else {

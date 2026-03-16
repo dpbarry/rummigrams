@@ -12,61 +12,6 @@ import { initSelection } from './selection.js';
 import { initScrollFade } from './scrollfade.js';
 import { isMultiplayer, createPartyConnection, getPartyRoomId, createShareUrl } from './party.js';
 
-const LOBBY_DEBUG = true;
-const lobbyLog = (step, detail = '') => {
-    if (!LOBBY_DEBUG) return;
-    const msg = `[Rummigrams Lobby] ${step}${detail ? ` ${detail}` : ''}`;
-    console.warn(msg);
-    if (typeof detail === 'object' && detail !== null && detail.stack) console.warn(detail.stack);
-};
-const permissionLog = (api, method, args, stack) => {
-    console.warn(`[Rummigrams Permission] ${api}.${method} called`, args ?? '', '\n', stack || new Error().stack);
-};
-function installPermissionHooks() {
-    if (!LOBBY_DEBUG || window.__rummigramsPermissionHooksInstalled) return;
-    window.__rummigramsPermissionHooksInstalled = true;
-    try {
-        if (navigator.clipboard) {
-            const origWrite = navigator.clipboard.writeText.bind(navigator.clipboard);
-            navigator.clipboard.writeText = function (...a) {
-                permissionLog('clipboard', 'writeText', a, new Error().stack);
-                return origWrite(...a);
-            };
-            if (navigator.clipboard.readText) {
-                const origRead = navigator.clipboard.readText.bind(navigator.clipboard);
-                navigator.clipboard.readText = function (...a) {
-                    permissionLog('clipboard', 'readText', a, new Error().stack);
-                    return origRead(...a);
-                };
-            }
-        }
-        if (navigator.permissions?.query) {
-            const orig = navigator.permissions.query.bind(navigator.permissions);
-            navigator.permissions.query = function (...a) {
-                permissionLog('permissions', 'query', a, new Error().stack);
-                return orig(...a);
-            };
-        }
-        if (navigator.share) {
-            const orig = navigator.share.bind(navigator);
-            navigator.share = function (...a) {
-                permissionLog('navigator', 'share', a, new Error().stack);
-                return orig(...a);
-            };
-        }
-        if (typeof Notification !== 'undefined' && Notification.requestPermission) {
-            const orig = Notification.requestPermission.bind(Notification);
-            Notification.requestPermission = function (...a) {
-                permissionLog('Notification', 'requestPermission', a, new Error().stack);
-                return orig(...a);
-            };
-        }
-    } catch (e) {
-        console.warn('[Rummigrams Permission] hook install failed', e);
-    }
-}
-installPermissionHooks();
-
 const fixScaleClick = (btn, callback) => {
     if (!btn) return;
     let startRect = null;
@@ -113,6 +58,50 @@ const appendLobbyGhostSlots = (count = LOBBY_GHOST_SLOTS) => {
         li.innerHTML = '<span class="lobby-ghost-bar"></span>';
         playerListEl.appendChild(li);
     }
+};
+
+const ensureLobbyListWrapper = () => {
+    if (!playerListEl) return null;
+    let wrapper = playerListEl.closest('.lobby-player-list-wrap');
+    if (wrapper) return wrapper;
+    wrapper = document.createElement('div');
+    wrapper.className = 'lobby-player-list-wrap';
+    playerListEl.parentNode.insertBefore(wrapper, playerListEl);
+    wrapper.appendChild(playerListEl);
+    return wrapper;
+};
+
+const animateLobbyListHeight = (updateFn) => {
+    const wrapper = ensureLobbyListWrapper();
+    if (!wrapper) { updateFn(); return; }
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    wrapper.style.transition = 'height var(--duration-normal) var(--ease-luxe)';
+    wrapper.style.overflow = 'hidden';
+    const oldHeight = Math.round(wrapper.getBoundingClientRect().height);
+    wrapper.style.height = `${oldHeight}px`;
+    void wrapper.offsetHeight;
+    updateFn();
+    const newHeight = Math.round(playerListEl.getBoundingClientRect().height);
+    if (reduceMotion) {
+        wrapper.style.height = '';
+        wrapper.style.transition = '';
+        return;
+    }
+    if (oldHeight === newHeight) {
+        wrapper.style.height = '';
+        wrapper.style.transition = '';
+        return;
+    }
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            wrapper.style.height = `${newHeight}px`;
+            const onEnd = () => {
+                wrapper.style.removeProperty('height');
+                wrapper.style.removeProperty('transition');
+            };
+            wrapper.addEventListener('transitionend', onEnd, { once: true });
+        });
+    });
 };
 
 const hslToHex = (h, s, l) => {
@@ -542,7 +531,6 @@ const disposeGame = () => {
 };
 
 const initGame = () => {
-    lobbyLog('0 initGame', 'entry');
     disposeGame();
     window.__disposeGame = disposeGame;
 
@@ -630,9 +618,7 @@ const initGame = () => {
     const forceNewGame = sessionStorage.getItem('rummigrams_new_game') === 'true';
     sessionStorage.removeItem('rummigrams_new_game');
 
-    lobbyLog('1 initGame', 'isMultiplayer=' + isMultiplayer());
     if (isMultiplayer()) {
-        lobbyLog('2 multiplayer branch', 'entering lobby path');
         const app = document.getElementById('app');
         const lobbyPage = app?.closest('.page');
         const pageSlide = lobbyPage?.querySelector(':scope > .page-slide');
@@ -640,7 +626,6 @@ const initGame = () => {
         const boardArea = app?.querySelector(':scope > .board-area');
 
         if (lobbyPage && pageSlide && app && header && boardArea && lobbyEl) {
-            lobbyLog('3 DOM reorganize', 'moving lobby into clone');
             boardArea.removeChild(lobbyEl);
 
             const lobbyApp = document.createElement('div');
@@ -692,12 +677,10 @@ const initGame = () => {
             window.__lobbyRouteSettled = false;
             window.__onRouteSettled.push(() => {
                 window.__lobbyRouteSettled = true;
-                lobbyLog('4 onRouteSettled', 'lobbyRouteSettled=true');
             });
         }
 
         const roomId = getPartyRoomId();
-        lobbyLog('5 roomId', roomId || 'null');
         let otherTabHasRoom = false;
         const showAlreadyOpenUI = (source) => {
 
@@ -715,25 +698,22 @@ const initGame = () => {
             }
         };
         const doneClaimCheck = () => {
-            lobbyLog('6 doneClaimCheck', 'otherTabHasRoom=' + otherTabHasRoom);
             if (otherTabHasRoom) showAlreadyOpenUI('doneClaimCheck');
             else runLobbyInit();
         };
         const BC_WAIT_MS = 200;
         const BC_PING_DELAY_MS = 180;
         const runPingAndWait = () => {
-            lobbyLog('6a runPingAndWait', 'creating BroadcastChannel');
             if (typeof BroadcastChannel !== 'undefined' && roomId) {
                 const ch = new BroadcastChannel(ROOM_CHAN(roomId));
                 ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) otherTabHasRoom = true; };
                 ch.postMessage({ type: 'ping', roomId });
-                setTimeout(() => { ch.close(); lobbyLog('6b BC timeout', 'calling doneClaimCheck'); doneClaimCheck(); }, BC_WAIT_MS);
+                setTimeout(() => { ch.close(); doneClaimCheck(); }, BC_WAIT_MS);
             } else {
                 doneClaimCheck();
             }
         };
         const hasSavedState = !!loadPartyGame(roomId);
-        lobbyLog('7 hasSavedState', String(hasSavedState) + ' -> ' + (hasSavedState ? 'doneClaimCheck()' : 'setTimeout(runPingAndWait)'));
 
         if (hasSavedState) {
             doneClaimCheck();
@@ -741,21 +721,17 @@ const initGame = () => {
             setTimeout(runPingAndWait, BC_PING_DELAY_MS);
         }
         function runLobbyInit() {
-            lobbyLog('8 runLobbyInit', 'entry');
             const tabToken = Math.random().toString(36).slice(2) + Date.now();
             if (roomId) setRoomActive(roomId, tabToken);
             const isReconnect = !!loadPartyGame(roomId);
-            lobbyLog('9 runLobbyInit', 'setTimeout 80ms, isReconnect=' + isReconnect);
             setTimeout(() => {
-                lobbyLog('10 after 80ms', 'token check');
                 const keyVal = roomId ? localStorage.getItem(ROOM_ACTIVE_KEY(roomId)) : null;
                 const held = isReconnect || (roomId && keyVal === tabToken);
 
-                if (!held) { lobbyLog('10a tokenCheck fail', 'showAlreadyOpenUI'); showAlreadyOpenUI('tokenCheck'); return; }
+                if (!held) { showAlreadyOpenUI('tokenCheck'); return; }
                 runLobbyInitRest();
             }, 80);
             function runLobbyInitRest() {
-                lobbyLog('11 runLobbyInitRest', 'entry');
                 let rejoining = !!loadPartyGame(roomId);
                 if (!rejoining) startRoomTabClaim(roomId);
                 currentPhase = 'lobby';
@@ -779,9 +755,7 @@ const initGame = () => {
                         runRejoinFlow(rid);
                     }
                 };
-                lobbyLog('12 runLobbyInitRest', 'rejoining=' + rejoining);
                 if (rejoining) {
-                    lobbyLog('12a rejoin branch', 'runRejoinBC scheduled');
                     if (startBtn) startBtn.style.display = 'none';
                     if (lobbyWaitEl) lobbyWaitEl.style.display = 'none';
                     if (joinBtn) joinBtn.style.display = 'none';
@@ -818,7 +792,6 @@ const initGame = () => {
                     };
                     setTimeout(runRejoinBC, REJOIN_BC_DELAY_MS);
                 }
-                lobbyLog('13 before localStorage/savedHue', '');
                 const savedHue = localStorage.getItem('rummigrams_lobby_hue');
                 if (nameInput) nameInput.value = (localStorage.getItem('rummigrams_name') || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
                 const defaultHue = Math.floor(Math.random() * 360);
@@ -837,21 +810,29 @@ const initGame = () => {
                         const name = getLobbyName();
                         const displayName = name || 'Player One';
                         const esc = (s) => String(s).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
-                        playerListEl.innerHTML = `<li class="lobby-player lobby-player--self"><span class="lobby-swatch"></span><span class="lobby-name">${esc(displayName)}</span><span class="lobby-tags">host · you</span></li>`;
-                    } else {
-                        playerListEl.innerHTML = '';
-                        playerListEl.setAttribute('aria-busy', 'true');
-                        appendLobbyGhostSlots(4);
+                        const doCreatorList = () => {
+                            if (!playerListEl) return;
+                            const run = () => {
+                                requestAnimationFrame(() => {
+                                    requestAnimationFrame(() => {
+                                        animateLobbyListHeight(() => {
+                                            playerListEl.innerHTML = `<li class="lobby-player lobby-player--self"><span class="lobby-swatch"></span><span class="lobby-name">${esc(displayName)}</span><span class="lobby-tags">host · you</span></li>`;
+                                        });
+                                    });
+                                });
+                            };
+                            setTimeout(run, 100);
+                        };
+                        window.__onRouteSettled = window.__onRouteSettled || [];
+                        window.__onRouteSettled.push(doCreatorList);
                     }
                 }
-                lobbyLog('14 share URL section', 'getting shareUrlEl, shareWrap');
                 const shareUrlEl = $('lobby-share-url');
                 const shareWrap = $('lobby-share-wrap');
                 if (shareUrlEl && shareWrap && roomId) {
                     const url = createShareUrl(roomId);
                     shareUrlEl.textContent = url;
                     const copyBtn = $('lobby-share-copy');
-                    lobbyLog('15 copy button', copyBtn ? 'adding click listener (clipboard only on click)' : 'no copyBtn');
                     if (copyBtn) copyBtn.addEventListener('click', () => {
                         navigator.clipboard?.writeText(url);
                     });
@@ -1129,7 +1110,6 @@ const initGame = () => {
                 };
 
                 const renderLobby = serverState => {
-                    lobbyLog('16 renderLobby', 'called');
                     lastLobbyState = serverState;
                     const players = serverState.players || {};
                     const joinOrder = serverState.joinOrder || [];
@@ -1137,8 +1117,9 @@ const initGame = () => {
                     if (myServerId) isHost = hostId === myServerId;
                     if (playerListEl) {
                         playerListEl.removeAttribute('aria-busy');
-                        playerListEl.innerHTML = '';
-                        Object.entries(players).forEach(([id, p]) => {
+                        animateLobbyListHeight(() => {
+                            playerListEl.innerHTML = '';
+                            Object.entries(players).forEach(([id, p]) => {
                             const li = document.createElement('li');
                             li.className = id === myServerId ? 'lobby-player lobby-player--self' : 'lobby-player';
                             const raw = id === myServerId ? selectedLobbyColor : (p.color || '#64748b');
@@ -1156,6 +1137,7 @@ const initGame = () => {
                             const swatchStyle = id === myServerId ? '' : ` style="background:${color}"`;
                             li.innerHTML = `<span class="lobby-swatch"${swatchStyle}></span><span class="lobby-name">${name}</span>${tags.length ? `<span class="lobby-tags">${tags.join(' · ')}</span>` : ''}`;
                             playerListEl.appendChild(li);
+                        });
                         });
                     }
                     if (startBtn) {
@@ -1176,7 +1158,6 @@ const initGame = () => {
 
                 window.__pendingLobbyState = null;
                 const initPartyConnection = () => {
-                    lobbyLog('17 initPartyConnection', partyConnection ? 'already exists, return' : 'calling createPartyConnection');
                     if (partyConnection) return;
                     partyConnection = createPartyConnection((serverState, myId) => {
                         if (serverState?.rejected) {
@@ -1220,7 +1201,6 @@ const initGame = () => {
                         }
                         renderLobby(serverState);
                     }, () => !!sessionStorage.getItem(ROOM_ACTIVE_KEY(roomId)));
-                    lobbyLog('18 createPartyConnection done', 'registering onRouteSettled');
                     window.__onRouteSettled = (window.__onRouteSettled || []);
                     window.__onRouteSettled.push(() => {
                         window.__lobbyRouteSettled = true;
@@ -1237,7 +1217,6 @@ const initGame = () => {
                         }
                         if (!hasAutoFocusedLobbyName && nameInput && !rejoining) {
                             hasAutoFocusedLobbyName = true;
-                            lobbyLog('21 focus', 'nameInput.focus()');
                             nameInput.focus();
                         }
                     });
@@ -1253,7 +1232,6 @@ const initGame = () => {
                             renderLobby(lastLobbyState);
                         }
                     };
-                    lobbyLog('19 waitReady().then(sendJoin)', '');
                     partyConnection.waitReady().then(sendJoin);
                     if (nameInput) {
                         nameInput.addEventListener('change', () => { if (partyConnection?.ready) sendJoin(); });
@@ -1275,10 +1253,9 @@ const initGame = () => {
                         if (partyConnection?.ready) partyConnection.joinGame();
                     });
                 };
-                lobbyLog('20 branch', !rejoining ? '!rejoining -> initPartyConnection()' : 'rejoining -> skip initPartyConnection');
                 if (!rejoining) initPartyConnection();
-            } // runLobbyInitRest
-        } // runLobbyInit
+            }
+        }
     } else if (!forceNewGame && loadSavedGame()) {
         setPhase('game');
     } else {

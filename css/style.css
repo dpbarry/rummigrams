@@ -510,6 +510,11 @@ body {
   pointer-events: none;
 }
 
+.lobby-player-list-wrap {
+  overflow: hidden;
+  transition: height var(--duration-normal) var(--ease-luxe);
+}
+
 .lobby-player-list {
   list-style: none;
   margin: 0;

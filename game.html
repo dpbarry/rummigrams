@@ -61,7 +61,14 @@
                 </div>
                 <div class="lobby-section lobby-section--players">
                     <span class="lobby-label">Players</span>
-                    <ul id="lobby-players" class="lobby-player-list" aria-live="polite"></ul>
+                    <div class="lobby-player-list-wrap">
+                        <ul id="lobby-players" class="lobby-player-list" aria-live="polite" aria-busy="true">
+                            <li class="lobby-player lobby-player--ghost" aria-hidden="true"><span class="lobby-ghost-bar"></span></li>
+                            <li class="lobby-player lobby-player--ghost" aria-hidden="true"><span class="lobby-ghost-bar"></span></li>
+                            <li class="lobby-player lobby-player--ghost" aria-hidden="true"><span class="lobby-ghost-bar"></span></li>
+                            <li class="lobby-player lobby-player--ghost" aria-hidden="true"><span class="lobby-ghost-bar"></span></li>
+                        </ul>
+                    </div>
                 </div>
                 <div class="lobby-start-row">
                     <button type="button" id="lobby-start" class="lobby-start-btn" disabled aria-disabled="true">Start game</button>
@@ -330,7 +337,6 @@
         import { initGame } from './js/app.js';
         import { initScrollFade } from './js/scrollfade.js';
 
-        console.warn('[Rummigrams Lobby] G1 game.html script', 'imports done, about to initGame()');
         document.getElementById('btn-home').addEventListener('click', () => {
             Router('home.html');
         });
@@ -338,7 +344,6 @@
         initScrollFade(document.getElementById('info-dialog-content'));
 
         initGame();
-        console.warn('[Rummigrams Lobby] G2 game.html script', 'initGame() returned, __pageReady=true');
         window.__pageReady = true;
     </script>
 
