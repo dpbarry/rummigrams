@@ -22,17 +22,17 @@ const ROOM_ACTIVE_KEY = (id) => `rummigrams_room_${id}_active`;
 export const createPartyConnection = (onState, getPrimary = () => false) => {
   const roomId = getRoomId();
   if (!roomId) return null;
-
+  if (typeof console !== 'undefined' && console.warn) console.warn('[Rummigrams Lobby] P1 createPartyConnection', 'new WebSocket');
   const ws = new WebSocket(`${PARTYKIT_URL}/party/${roomId}`);
   let myId = null;
   const sessionId = getOrCreateSessionId();
 
   ws.onopen = () => {
+    if (typeof console !== 'undefined' && console.warn) console.warn('[Rummigrams Lobby] P2 WebSocket onopen', roomId);
     try {
       const primary = getPrimary();
       ws.send(JSON.stringify({ type: "SESSION", data: { sessionId, primary } }));
     } catch (_) {}
-    console.log("Connected to room:", roomId);
   };
 
   ws.onmessage = (event) => {
@@ -41,7 +41,7 @@ export const createPartyConnection = (onState, getPrimary = () => false) => {
     onState(state, myId);
   };
 
-  ws.onclose = () => console.log("Disconnected from room");
+  ws.onclose = () => {};
   ws.onerror = err => console.error("WebSocket error:", err);
 
   const send = (type, data) => {

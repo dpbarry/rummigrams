@@ -12,6 +12,60 @@ import { initSelection } from './selection.js';
 import { initScrollFade } from './scrollfade.js';
 import { isMultiplayer, createPartyConnection, getPartyRoomId, createShareUrl } from './party.js';
 
+const LOBBY_DEBUG = true;
+const lobbyLog = (step, detail = '') => {
+    if (!LOBBY_DEBUG) return;
+    const msg = `[Rummigrams Lobby] ${step}${detail ? ` ${detail}` : ''}`;
+    console.warn(msg);
+    if (typeof detail === 'object' && detail !== null && detail.stack) console.warn(detail.stack);
+};
+const permissionLog = (api, method, args, stack) => {
+    console.warn(`[Rummigrams Permission] ${api}.${method} called`, args ?? '', '\n', stack || new Error().stack);
+};
+function installPermissionHooks() {
+    if (!LOBBY_DEBUG || window.__rummigramsPermissionHooksInstalled) return;
+    window.__rummigramsPermissionHooksInstalled = true;
+    try {
+        if (navigator.clipboard) {
+            const origWrite = navigator.clipboard.writeText.bind(navigator.clipboard);
+            navigator.clipboard.writeText = function (...a) {
+                permissionLog('clipboard', 'writeText', a, new Error().stack);
+                return origWrite(...a);
+            };
+            if (navigator.clipboard.readText) {
+                const origRead = navigator.clipboard.readText.bind(navigator.clipboard);
+                navigator.clipboard.readText = function (...a) {
+                    permissionLog('clipboard', 'readText', a, new Error().stack);
+                    return origRead(...a);
+                };
+            }
+        }
+        if (navigator.permissions?.query) {
+            const orig = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = function (...a) {
+                permissionLog('permissions', 'query', a, new Error().stack);
+                return orig(...a);
+            };
+        }
+        if (navigator.share) {
+            const orig = navigator.share.bind(navigator);
+            navigator.share = function (...a) {
+                permissionLog('navigator', 'share', a, new Error().stack);
+                return orig(...a);
+            };
+        }
+        if (typeof Notification !== 'undefined' && Notification.requestPermission) {
+            const orig = Notification.requestPermission.bind(Notification);
+            Notification.requestPermission = function (...a) {
+                permissionLog('Notification', 'requestPermission', a, new Error().stack);
+                return orig(...a);
+            };
+        }
+    } catch (e) {
+        console.warn('[Rummigrams Permission] hook install failed', e);
+    }
+}
+installPermissionHooks();
 
 const fixScaleClick = (btn, callback) => {
     if (!btn) return;
@@ -92,25 +146,25 @@ function randomizeLobbyName() {
 const buildValueGrid = () => new Map([...state.grid].map(([pos, id]) => [pos, state.tiles.get(id)]));
 
 const calcRemainingFromBoard = board => {
-            if (!board?.tiles) return null;
-            const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
-            const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
-            const gridMap = new Map(gridEntries);
-            const tilesMap = new Map(tilesEntries);
-            const total = tilesMap.size;
-            if (total === 0) return { remaining: 0, total: 0 };
-            const valueGrid = new Map();
-            for (const [pos, id] of gridMap) {
-                const v = tilesMap.get(id);
-                if (v != null) valueGrid.set(pos, v);
-            }
-            const validation = validateBoard(valueGrid);
-            let inValid = 0;
-            for (const [pos] of gridMap) {
-                if (validation.validPositions.has(pos)) inValid++;
-            }
-            return { remaining: total - inValid, total };
-        };
+    if (!board?.tiles) return null;
+    const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
+    const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
+    const gridMap = new Map(gridEntries);
+    const tilesMap = new Map(tilesEntries);
+    const total = tilesMap.size;
+    if (total === 0) return { remaining: 0, total: 0 };
+    const valueGrid = new Map();
+    for (const [pos, id] of gridMap) {
+        const v = tilesMap.get(id);
+        if (v != null) valueGrid.set(pos, v);
+    }
+    const validation = validateBoard(valueGrid);
+    let inValid = 0;
+    for (const [pos] of gridMap) {
+        if (validation.validPositions.has(pos)) inValid++;
+    }
+    return { remaining: total - inValid, total };
+};
 
 let partyConnection = null;
 let myServerId = null;
@@ -131,7 +185,7 @@ const setRoomActive = (id, value) => {
     try {
         if (value != null && value !== '') { localStorage.setItem(k, String(value)); sessionStorage.setItem(k, '1'); }
         else { localStorage.removeItem(k); sessionStorage.removeItem(k); }
-    } catch (_) {}
+    } catch (_) { }
 };
 let _unloadClaimGuardRegistered = false;
 const startRoomTabClaim = (roomId) => {
@@ -146,13 +200,13 @@ const startRoomTabClaim = (roomId) => {
         const stopClaiming = () => {
             window.__roomTabUnloading = true;
             if (roomTabClaimInterval) { clearInterval(roomTabClaimInterval); roomTabClaimInterval = null; }
-            if (roomTabChannel) { try { roomTabChannel.close(); } catch (_) {} roomTabChannel = null; }
+            if (roomTabChannel) { try { roomTabChannel.close(); } catch (_) { } roomTabChannel = null; }
         };
         window.addEventListener('beforeunload', stopClaiming);
         window.addEventListener('pagehide', stopClaiming);
     }
     if (typeof BroadcastChannel === 'undefined') return;
-    if (roomTabChannel) try { roomTabChannel.close(); } catch (_) {}
+    if (roomTabChannel) try { roomTabChannel.close(); } catch (_) { }
     roomTabChannel = new BroadcastChannel(ROOM_CHAN(roomId));
     const claim = () => {
         if (window.__roomTabUnloading) return;
@@ -473,7 +527,7 @@ const disposeGame = () => {
     delete window.__clearPartyGameOnLeave;
     if (roomTabClaimInterval) clearInterval(roomTabClaimInterval);
     roomTabClaimInterval = null;
-    if (roomTabChannel) try { roomTabChannel.close(); roomTabChannel = null; } catch (_) {}
+    if (roomTabChannel) try { roomTabChannel.close(); roomTabChannel = null; } catch (_) { }
     if (roomTabClaimRoomId) setRoomActive(roomTabClaimRoomId, null);
     roomTabClaimRoomId = null;
     if (gamePage?.parentNode) { gamePage.remove(); gamePage = null; }
@@ -488,6 +542,7 @@ const disposeGame = () => {
 };
 
 const initGame = () => {
+    lobbyLog('0 initGame', 'entry');
     disposeGame();
     window.__disposeGame = disposeGame;
 
@@ -519,7 +574,7 @@ const initGame = () => {
 
     const openDialog = () => document.querySelector('.info-dialog-overlay')?.classList.add('open');
     const closeDialog = () => document.querySelector('.info-dialog-overlay.open')?.classList.remove('open');
-    let closePlayerBoardDialog = () => {};
+    let closePlayerBoardDialog = () => { };
 
     const appContainer = document.querySelector('.app');
     const btnInfo = appContainer?.querySelector('#btn-info');
@@ -575,7 +630,9 @@ const initGame = () => {
     const forceNewGame = sessionStorage.getItem('rummigrams_new_game') === 'true';
     sessionStorage.removeItem('rummigrams_new_game');
 
+    lobbyLog('1 initGame', 'isMultiplayer=' + isMultiplayer());
     if (isMultiplayer()) {
+        lobbyLog('2 multiplayer branch', 'entering lobby path');
         const app = document.getElementById('app');
         const lobbyPage = app?.closest('.page');
         const pageSlide = lobbyPage?.querySelector(':scope > .page-slide');
@@ -583,6 +640,7 @@ const initGame = () => {
         const boardArea = app?.querySelector(':scope > .board-area');
 
         if (lobbyPage && pageSlide && app && header && boardArea && lobbyEl) {
+            lobbyLog('3 DOM reorganize', 'moving lobby into clone');
             boardArea.removeChild(lobbyEl);
 
             const lobbyApp = document.createElement('div');
@@ -634,21 +692,15 @@ const initGame = () => {
             window.__lobbyRouteSettled = false;
             window.__onRouteSettled.push(() => {
                 window.__lobbyRouteSettled = true;
+                lobbyLog('4 onRouteSettled', 'lobbyRouteSettled=true');
             });
         }
 
         const roomId = getPartyRoomId();
+        lobbyLog('5 roomId', roomId || 'null');
         let otherTabHasRoom = false;
-        // #region agent log
-        const _dbg = (msg, data, hyp) => {
-            const entry = { t: Date.now(), msg, data: data || {}, hyp };
-            (window.__debugLogs = window.__debugLogs || []).push(entry);
-            console.log('[Rummigrams]', entry.msg, entry.data, entry.hyp);
-            fetch('http://127.0.0.1:7664/ingest/2823e43f-3e83-4ff4-b7a7-694239d96d09',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'67052c'},body:JSON.stringify({sessionId:'67052c',location:'app.js:multi',message:msg,data:data||{},hypothesisId:hyp,timestamp:Date.now()})}).catch(()=>{});
-        };
-        // #endregion
         const showAlreadyOpenUI = (source) => {
-            _dbg('showAlreadyOpenUI', { source }, 'trigger');
+
             if (lobbyEl) lobbyEl.classList.add('lobby--blocked');
             const lobbyMain = document.querySelector('.lobby-main');
             if (lobbyMain) lobbyMain.classList.add('lobby--blocked');
@@ -663,552 +715,569 @@ const initGame = () => {
             }
         };
         const doneClaimCheck = () => {
-            _dbg('doneClaimCheck', { otherTabHasRoom }, 'D');
+            lobbyLog('6 doneClaimCheck', 'otherTabHasRoom=' + otherTabHasRoom);
             if (otherTabHasRoom) showAlreadyOpenUI('doneClaimCheck');
             else runLobbyInit();
         };
         const BC_WAIT_MS = 200;
         const BC_PING_DELAY_MS = 180;
         const runPingAndWait = () => {
+            lobbyLog('6a runPingAndWait', 'creating BroadcastChannel');
             if (typeof BroadcastChannel !== 'undefined' && roomId) {
                 const ch = new BroadcastChannel(ROOM_CHAN(roomId));
                 ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) otherTabHasRoom = true; };
                 ch.postMessage({ type: 'ping', roomId });
-                setTimeout(() => { ch.close(); doneClaimCheck(); }, BC_WAIT_MS);
+                setTimeout(() => { ch.close(); lobbyLog('6b BC timeout', 'calling doneClaimCheck'); doneClaimCheck(); }, BC_WAIT_MS);
             } else {
                 doneClaimCheck();
             }
         };
         const hasSavedState = !!loadPartyGame(roomId);
-        _dbg('initial branch', { hasSavedState, roomId: roomId || null }, 'E');
+        lobbyLog('7 hasSavedState', String(hasSavedState) + ' -> ' + (hasSavedState ? 'doneClaimCheck()' : 'setTimeout(runPingAndWait)'));
+
         if (hasSavedState) {
             doneClaimCheck();
         } else {
             setTimeout(runPingAndWait, BC_PING_DELAY_MS);
         }
         function runLobbyInit() {
-        const tabToken = Math.random().toString(36).slice(2) + Date.now();
-        if (roomId) setRoomActive(roomId, tabToken);
-        const isReconnect = !!loadPartyGame(roomId);
-        setTimeout(() => {
-            const keyVal = roomId ? localStorage.getItem(ROOM_ACTIVE_KEY(roomId)) : null;
-            const held = isReconnect || (roomId && keyVal === tabToken);
-            _dbg('token check', { isReconnect, held, keyMatchesToken: keyVal === tabToken }, 'A');
-            if (!held) { showAlreadyOpenUI('tokenCheck'); return; }
-            runLobbyInitRest();
-        }, 80);
-        function runLobbyInitRest() {
-        let rejoining = !!loadPartyGame(roomId);
-        if (!rejoining) startRoomTabClaim(roomId);
-        currentPhase = 'lobby';
-        myServerId = null;
-        let rejoinCheckDone = false;
-        let pendingRejoinState = null;
-        const showAlreadyOpenWithClose = () => {
-            _dbg('showAlreadyOpenWithClose', {}, 'B');
-            if (partyConnection?.close) { partyConnection.close(); partyConnection = null; }
-            showAlreadyOpenUI('rejoinBC');
-        };
-        const maybeRunRejoin = () => {
-            if (!rejoinCheckDone || otherTabHasRoom) {
-                if (otherTabHasRoom && pendingRejoinState) showAlreadyOpenWithClose();
-                return;
-            }
-            if (pendingRejoinState) {
-                const rid = pendingRejoinState;
-                pendingRejoinState = null;
-                lastLobbyState = lastLobbyState || { started: true, boards: {} };
-                runRejoinFlow(rid);
-            }
-        };
-        if (rejoining) {
-            if (startBtn) startBtn.style.display = 'none';
-            if (lobbyWaitEl) lobbyWaitEl.style.display = 'none';
-            if (joinBtn) joinBtn.style.display = 'none';
-            const rec = $('lobby-reconnecting');
-            if (rec) rec.style.display = '';
-            const REJOIN_BC_DELAY_MS = 400;
-            const runRejoinBC = () => {
-                if (typeof BroadcastChannel !== 'undefined' && roomId) {
-                    const ch = new BroadcastChannel(ROOM_CHAN(roomId));
-                    ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) { _dbg('rejoin BC claim', {}, 'B'); otherTabHasRoom = true; } };
-                    ch.postMessage({ type: 'ping', roomId });
-                    setTimeout(() => {
-                        ch.close();
-                        rejoinCheckDone = true;
-                        _dbg('rejoin BC done', { otherTabHasRoom }, 'B');
-                        if (otherTabHasRoom) showAlreadyOpenWithClose();
-                        else {
-                            initPartyConnection();
-                            pendingRejoinState = roomId;
-                            if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
-                            else { startRoomTabClaim(roomId); maybeRunRejoin(); }
-                        }
-                    }, 350);
-                } else {
-                    rejoinCheckDone = true;
-                    if (otherTabHasRoom) showAlreadyOpenWithClose();
-                    else {
-                        initPartyConnection();
-                        pendingRejoinState = roomId;
-                        if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
-                        else { startRoomTabClaim(roomId); maybeRunRejoin(); }
-                    }
-                }
-            };
-            setTimeout(runRejoinBC, REJOIN_BC_DELAY_MS);
-        }
-        const savedHue = localStorage.getItem('rummigrams_lobby_hue');
-        if (nameInput) nameInput.value = (localStorage.getItem('rummigrams_name') || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
-        const defaultHue = Math.floor(Math.random() * 360);
-        const hue = savedHue !== null && savedHue !== '' ? Math.max(0, Math.min(360, parseInt(savedHue, 10))) : defaultHue;
-        selectedLobbyHue = Number.isNaN(hue) ? defaultHue : hue;
-        selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
-        setUserColorVar();
-        if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', String((selectedLobbyHue / 360) * 100));
-        if (lobbyHueTrack) lobbyHueTrack.setAttribute('aria-valuenow', String(selectedLobbyHue));
-        let creatorShownOptimistic = false;
-        if (playerListEl) {
-            const justCreated = roomId && sessionStorage.getItem('rummigrams_created_room') === roomId;
-            if (justCreated) {
-                sessionStorage.removeItem('rummigrams_created_room');
-                creatorShownOptimistic = true;
-                const name = getLobbyName();
-                const displayName = name || 'Player One';
-                const esc = (s) => String(s).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
-                playerListEl.innerHTML = `<li class="lobby-player lobby-player--self"><span class="lobby-swatch"></span><span class="lobby-name">${esc(displayName)}</span><span class="lobby-tags">host · you</span></li>`;
-            } else {
-                playerListEl.innerHTML = '';
-                playerListEl.setAttribute('aria-busy', 'true');
-                appendLobbyGhostSlots(4);
-            }
-        }
-        const shareUrlEl = $('lobby-share-url');
-        const shareWrap = $('lobby-share-wrap');
-        if (shareUrlEl && shareWrap && roomId) {
-            const url = createShareUrl(roomId);
-            shareUrlEl.textContent = url;
-            const copyBtn = $('lobby-share-copy');
-            if (copyBtn) copyBtn.addEventListener('click', () => {
-                navigator.clipboard?.writeText(url);
-            });
-        } else if (shareWrap) shareWrap.style.display = 'none';
-        const updateLocalSelf = (updater) => {
-            if (!lastLobbyState || !myServerId) return;
-            const players = lastLobbyState.players;
-            if (!players || !players[myServerId]) return;
-            updater(players[myServerId]);
-        };
-        const updateHueUi = () => {
-            setUserColorVar();
-            if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', String((selectedLobbyHue / 360) * 100));
-            if (lobbyHueTrack) lobbyHueTrack.setAttribute('aria-valuenow', String(selectedLobbyHue));
-        };
-        const setHueFromX = (clientX) => {
-            if (!lobbyHueTrack) return;
-            const rect = lobbyHueTrack.getBoundingClientRect();
-            const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-            selectedLobbyHue = Math.round(pct * 360);
-            selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
-            localStorage.setItem('rummigrams_lobby_hue', String(selectedLobbyHue));
-            localStorage.setItem('rummigrams_color', selectedLobbyColor);
-            updateHueUi();
-            if (partyConnection?.ready) {
-                const name = getLobbyName();
-                localStorage.setItem('rummigrams_name', name);
-                partyConnection.join(name, selectedLobbyColor);
-            }
-            if (lastLobbyState) {
-                updateLocalSelf(p => {
-                    p.color = selectedLobbyColor;
-                    p.name = getLobbyName() || null;
-                });
-                renderLobby(lastLobbyState);
-            }
-        };
-        updateHueUi();
-        if (lobbyHueTrack) {
-            const onPointer = (e) => setHueFromX(e.clientX);
-            const onUp = () => {
-                document.removeEventListener('pointermove', onPointer);
-                document.removeEventListener('pointerup', onUp);
-                document.removeEventListener('pointercancel', onUp);
-            };
-            lobbyHueTrack.addEventListener('pointerdown', (e) => {
-                e.preventDefault();
-                setHueFromX(e.clientX);
-                document.addEventListener('pointermove', onPointer);
-                document.addEventListener('pointerup', onUp);
-                document.addEventListener('pointercancel', onUp);
-            });
-            lobbyHueTrack.addEventListener('keydown', (e) => {
-                const step = e.shiftKey ? 15 : 5;
-                if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    selectedLobbyHue = Math.max(0, selectedLobbyHue - step);
-                } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    selectedLobbyHue = Math.min(360, selectedLobbyHue + step);
-                } else return;
-                selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
-                localStorage.setItem('rummigrams_lobby_hue', String(selectedLobbyHue));
-                localStorage.setItem('rummigrams_color', selectedLobbyColor);
-                updateHueUi();
-                if (partyConnection?.ready) {
-                    const name = getLobbyName();
-                    partyConnection.join(name, selectedLobbyColor);
-                }
-                if (lastLobbyState) {
-                    updateLocalSelf(p => {
-                        p.color = selectedLobbyColor;
-                        p.name = getLobbyName() || null;
-                    });
-                    renderLobby(lastLobbyState);
-                }
-            });
-        }
+            lobbyLog('8 runLobbyInit', 'entry');
+            const tabToken = Math.random().toString(36).slice(2) + Date.now();
+            if (roomId) setRoomActive(roomId, tabToken);
+            const isReconnect = !!loadPartyGame(roomId);
+            lobbyLog('9 runLobbyInit', 'setTimeout 80ms, isReconnect=' + isReconnect);
+            setTimeout(() => {
+                lobbyLog('10 after 80ms', 'token check');
+                const keyVal = roomId ? localStorage.getItem(ROOM_ACTIVE_KEY(roomId)) : null;
+                const held = isReconnect || (roomId && keyVal === tabToken);
 
+                if (!held) { lobbyLog('10a tokenCheck fail', 'showAlreadyOpenUI'); showAlreadyOpenUI('tokenCheck'); return; }
+                runLobbyInitRest();
+            }, 80);
+            function runLobbyInitRest() {
+                lobbyLog('11 runLobbyInitRest', 'entry');
+                let rejoining = !!loadPartyGame(roomId);
+                if (!rejoining) startRoomTabClaim(roomId);
+                currentPhase = 'lobby';
+                myServerId = null;
+                let rejoinCheckDone = false;
+                let pendingRejoinState = null;
+                const showAlreadyOpenWithClose = () => {
 
-        const playerOrderLabel = (joinOrder, players, id) => {
-            const order = (joinOrder && joinOrder.length > 0) ? joinOrder : Object.keys(players || {}).sort();
-            const idx = order.indexOf(id);
-            const n = idx >= 0 ? idx + 1 : 1;
-            if (n === 1) return 'One';
-            if (n === 2) return 'Two';
-            if (n === 3) return 'Three';
-            return String(n);
-        };
-
-        const formatTileValue = v => ({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[v] ?? String(v));
-
-        const muteForDiamond = hex => {
-            if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return 'hsl(270 28% 48%)';
-            const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
-            const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
-            if (max === min) return `hsl(270 28% ${Math.round(48 + l * 14)}%)`;
-            const d = max - min, s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-            let h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-            h = Math.round(h * 60) % 360;
-            const sat = Math.round(Math.min(s * 100 * 1.4, 42));
-            const lit = Math.round(44 + l * 16);
-            return `hsl(${h} ${sat}% ${lit}%)`;
-        };
-
-        const renderHeaderPlayerDiamonds = serverState => {
-            const headerPlayers = document.getElementById('app')?.querySelector('#header-players');
-            if (!headerPlayers || currentPhase !== 'game' || !serverState.started) {
-                if (headerPlayers) headerPlayers.innerHTML = '';
-                return;
-            }
-            const players = serverState.players || {};
-            const boards = serverState.boards || {};
-            const order = serverState.joinOrder || Object.keys(players).sort();
-            headerPlayers.removeAttribute('aria-hidden');
-            const existing = new Map([...headerPlayers.querySelectorAll('.header-player')].map(el => [el.dataset.playerId, el]));
-            order.forEach((id, i) => {
-                const p = players[id];
-                if (!p) return;
-                const raw = /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : '#64748b';
-                const color = muteForDiamond(raw);
-                const serverNameForPlayer = (p.name && String(p.name).trim()) || '';
-                const name = (id === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
-                const initial = name ? name[0].toUpperCase() : String(i + 1);
-                const label = name || `Player ${['One', 'Two', 'Three'][i] ?? i + 1}`;
-                let remaining = 0, total = 0;
-                if (id === myServerId && state?.tiles?.size != null && state?.validation?.validPositions != null) {
-                    remaining = calcRemainingTiles(state, state.validation.validPositions);
-                    total = state.tiles.size;
-                } else {
-                    const r = calcRemainingFromBoard(boards[id]);
-                    if (r) { remaining = r.remaining; total = r.total; }
-                }
-                const progress = total > 0 ? Math.min(100, Math.round(((total - remaining) / total) * 100)) : 0;
-                const setProgress = (el, pct) => { if (el) el.style.setProperty('--progress', String(pct)); };
-                const animateProgress = (el, toPct, duration = 280) => {
-                    if (!el) return;
-                    const fromPct = parseFloat(el.style.getPropertyValue('--progress')) || 0;
-                    if (Math.abs(fromPct - toPct) < 0.5) { setProgress(el, toPct); return; }
-                    const start = performance.now();
-                    const easeOutQuart = t => 1 - (1 - t) ** 4;
-                    const tick = () => {
-                        const elapsed = performance.now() - start;
-                        const t = Math.min(1, elapsed / duration);
-                        setProgress(el, fromPct + (toPct - fromPct) * easeOutQuart(t));
-                        if (t < 1) requestAnimationFrame(tick);
-                    };
-                    requestAnimationFrame(tick);
+                    if (partyConnection?.close) { partyConnection.close(); partyConnection = null; }
+                    showAlreadyOpenUI('rejoinBC');
                 };
-                let btn = existing.get(id);
-                if (btn) {
-                    existing.delete(id);
-                    btn.style.setProperty('--player-color', color);
-                    btn.setAttribute('aria-label', `${label} board`);
-                    const initEl = btn.querySelector('.header-player-initial');
-                    if (initEl) initEl.textContent = initial;
-                    animateProgress(btn, progress);
-                } else {
-                    btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'header-player';
-                    btn.style.setProperty('--player-color', color);
-                    btn.style.setProperty('--progress', String(progress));
-                    btn.setAttribute('aria-label', `${label} board`);
-                    btn.dataset.playerId = id;
-                    btn.innerHTML = `<span class="header-player-initial">${initial}</span>`;
-                    btn.addEventListener('click', () => openPlayerBoardDialog(id));
-                    setProgress(btn, progress);
-                }
-                headerPlayers.appendChild(btn);
-            });
-            existing.forEach(btn => btn.remove());
-        };
-        renderHeaderPlayerDiamondsFn = renderHeaderPlayerDiamonds;
-
-        const openPlayerBoardDialog = playerId => {
-            const overlay = document.getElementById('player-board-dialog-overlay');
-            const titleEl = document.getElementById('player-board-dialog-title');
-            const contentEl = document.getElementById('player-board-dialog-content');
-            const headerEl = document.getElementById('player-board-dialog-header');
-            if (!overlay || !titleEl || !contentEl) return;
-            const players = lastLobbyState?.players || {};
-            const boards = lastLobbyState?.boards || {};
-            const order = lastLobbyState?.joinOrder || Object.keys(players).sort();
-            headerEl?.classList.toggle('player-board-dialog-header--multi', order.length > 1);
-            const p = players[playerId];
-            const serverNameForPlayer = (p?.name && String(p.name).trim()) || '';
-            const name = (playerId === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
-            const i = order.indexOf(playerId);
-            const label = name || `Player ${['One', 'Two', 'Three'][i] ?? (i >= 0 ? i + 1 : 1)}`;
-            titleEl.textContent = label;
-            let board = boards[playerId];
-            if ((!board || !board.gridSize) && playerId === myServerId) {
-                board = {
-                    gridSize: state.level.gridSize,
-                    grid: [...state.grid.entries()],
-                    hand: [...state.hand],
-                    tiles: [...state.tiles.entries()]
-                };
-            }
-            if (!board || !board.gridSize) {
-                contentEl.innerHTML = '<p class="player-board-mini-label">No board data yet</p>';
-            } else {
-                const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
-                const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
-                const tilesMap = new Map(tilesEntries);
-                const gridMap = new Map(gridEntries);
-                const hand = board.hand || [];
-                const size = board.gridSize;
-                const valueGrid = new Map();
-                for (const [pos, tileId] of gridMap) {
-                    const v = tilesMap.get(tileId);
-                    if (v != null) valueGrid.set(pos, v);
-                }
-                const validation = valueGrid.size ? validateBoard(valueGrid) : null;
-                const tileClass = (pos) => {
-                    if (!validation) return 'player-board-mini-tile';
-                    if (validation.validPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--valid';
-                    if (validation.blockPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--block-error';
-                    if (validation.impossiblePositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--impossible';
-                    return 'player-board-mini-tile';
-                };
-                let html = '';
-                html += `<div class="player-board-mini-grid" style="grid-template-columns: repeat(${size}, 1.5rem); grid-template-rows: repeat(${size}, 1.5rem);">`;
-                for (let y = 0; y < size; y++) {
-                    for (let x = 0; x < size; x++) {
-                        const pos = `${x},${y}`;
-                        const tileId = gridMap.get(pos);
-                        const val = tileId != null ? tilesMap.get(tileId) : null;
-                        html += `<div class="player-board-mini-cell">${val != null ? `<span class="${tileClass(pos)}">${formatTileValue(val)}</span>` : ''}</div>`;
-                    }
-                }
-                html += '</div>';
-                html += '<div class="player-board-mini-rack">';
-                hand.forEach(id => {
-                    const v = tilesMap.get(id);
-                    if (v != null) html += `<span class="player-board-mini-tile">${formatTileValue(v)}</span>`;
-                });
-                html += '</div>';
-                contentEl.innerHTML = html;
-            }
-            overlay.dataset.viewingPlayerId = playerId;
-            overlay.classList.add('open');
-        };
-
-        const prevBtn = gamePage.querySelector('#player-board-dialog-prev');
-        const nextBtn = gamePage.querySelector('#player-board-dialog-next');
-        if (prevBtn) prevBtn.addEventListener('click', () => {
-            const overlay = document.getElementById('player-board-dialog-overlay');
-            if (!overlay?.classList.contains('open')) return;
-            const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
-            if (order.length <= 1) return;
-            const current = overlay.dataset.viewingPlayerId;
-            const i = order.indexOf(current);
-            const prevId = order[(i - 1 + order.length) % order.length];
-            openPlayerBoardDialog(prevId);
-        });
-        if (nextBtn) nextBtn.addEventListener('click', () => {
-            const overlay = document.getElementById('player-board-dialog-overlay');
-            if (!overlay?.classList.contains('open')) return;
-            const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
-            if (order.length <= 1) return;
-            const current = overlay.dataset.viewingPlayerId;
-            const i = order.indexOf(current);
-            const nextId = order[(i + 1) % order.length];
-            openPlayerBoardDialog(nextId);
-        });
-
-        closePlayerBoardDialog = () => {
-            const overlay = document.getElementById('player-board-dialog-overlay');
-            if (overlay) {
-                delete overlay.dataset.viewingPlayerId;
-                overlay.classList.remove('open');
-            }
-        };
-
-        const renderLobby = serverState => {
-            lastLobbyState = serverState;
-            const players = serverState.players || {};
-            const joinOrder = serverState.joinOrder || [];
-            const hostId = serverState.hostId || null;
-            if (myServerId) isHost = hostId === myServerId;
-            if (playerListEl) {
-                playerListEl.removeAttribute('aria-busy');
-                playerListEl.innerHTML = '';
-                Object.entries(players).forEach(([id, p]) => {
-                    const li = document.createElement('li');
-                    li.className = id === myServerId ? 'lobby-player lobby-player--self' : 'lobby-player';
-                    const raw = id === myServerId ? selectedLobbyColor : (p.color || '#64748b');
-                    const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : '#64748b';
-                    const serverName = (p.name && String(p.name).trim()) || '';
-                    const localName = getLobbyName();
-                    const orderLabel = playerOrderLabel(joinOrder, players, id);
-                    const displayName = id === myServerId
-                        ? (localName || serverName || `Player ${orderLabel}`)
-                        : (serverName || `Player ${orderLabel}`);
-                    const name = String(displayName).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
-                    const tags = [];
-                    if (id === hostId) tags.push('host');
-                    if (id === myServerId) tags.push('you');
-                    const swatchStyle = id === myServerId ? '' : ` style="background:${color}"`;
-                    li.innerHTML = `<span class="lobby-swatch"${swatchStyle}></span><span class="lobby-name">${name}</span>${tags.length ? `<span class="lobby-tags">${tags.join(' · ')}</span>` : ''}`;
-                    playerListEl.appendChild(li);
-                });
-            }
-            if (startBtn) {
-                const disabled = !isHost || !Object.keys(players).length || !!serverState.started;
-                startBtn.disabled = disabled;
-                startBtn.setAttribute('aria-disabled', String(disabled));
-                startBtn.style.display = serverState.started ? 'none' : (isHost ? '' : 'none');
-            }
-            if (lobbyWaitEl) lobbyWaitEl.style.display = (serverState.started || isHost) ? 'none' : '';
-            if (joinBtn) {
-                const canJoin = serverState.started && !serverState.boards?.[myServerId];
-                joinBtn.style.display = canJoin ? '' : 'none';
-                joinBtn.disabled = !canJoin;
-                joinBtn.setAttribute('aria-disabled', String(!canJoin));
-            }
-            if (serverState.started && serverState.boards?.[myServerId]) startPartyGame();
-        };
-
-        window.__pendingLobbyState = null;
-        const initPartyConnection = () => {
-            if (partyConnection) return;
-            partyConnection = createPartyConnection((serverState, myId) => {
-                if (serverState?.rejected) {
-                    _dbg('server rejected', {}, 'C');
-                    showAlreadyOpenUI('serverRejected');
-                    if (partyConnection) { partyConnection.close(); partyConnection = null; }
-                    return;
-                }
-                if (myId && !myServerId) myServerId = myId;
-                if (!myServerId && serverState.players && Object.keys(serverState.players).length === 1)
-                    myServerId = Object.keys(serverState.players)[0];
-                const mergedBoards = { ...(lastLobbyState?.boards || {}), ...(serverState.boards || {}) };
-                lastLobbyState = { ...serverState, boards: mergedBoards };
-                if (currentPhase === 'game') {
-                    if (serverState.started) renderHeaderPlayerDiamonds(serverState);
-                    const openOverlay = document.getElementById('player-board-dialog-overlay');
-                    if (openOverlay?.classList.contains('open')) {
-                        const openId = openOverlay.dataset.viewingPlayerId;
-                        if (openId) openPlayerBoardDialog(openId);
-                    }
-                    return;
-                }
-                if (rejoining && window.__lobbyRouteSettled && serverState.started) {
-                    rejoining = false;
-                    pendingRejoinState = roomId;
-                    maybeRunRejoin();
-                    return;
-                }
-                if (creatorShownOptimistic && serverState.players) {
-                    const ids = Object.keys(serverState.players);
-                    const only = ids.length === 1 && serverState.players[ids[0]];
-                    if (ids.length === 1 && only && only.name == null && only.color == null) {
-                        if (serverState.started) startPartyGame();
+                const maybeRunRejoin = () => {
+                    if (!rejoinCheckDone || otherTabHasRoom) {
+                        if (otherTabHasRoom && pendingRejoinState) showAlreadyOpenWithClose();
                         return;
                     }
-                    creatorShownOptimistic = false;
+                    if (pendingRejoinState) {
+                        const rid = pendingRejoinState;
+                        pendingRejoinState = null;
+                        lastLobbyState = lastLobbyState || { started: true, boards: {} };
+                        runRejoinFlow(rid);
+                    }
+                };
+                lobbyLog('12 runLobbyInitRest', 'rejoining=' + rejoining);
+                if (rejoining) {
+                    lobbyLog('12a rejoin branch', 'runRejoinBC scheduled');
+                    if (startBtn) startBtn.style.display = 'none';
+                    if (lobbyWaitEl) lobbyWaitEl.style.display = 'none';
+                    if (joinBtn) joinBtn.style.display = 'none';
+                    const rec = $('lobby-reconnecting');
+                    if (rec) rec.style.display = '';
+                    const REJOIN_BC_DELAY_MS = 400;
+                    const runRejoinBC = () => {
+                        if (typeof BroadcastChannel !== 'undefined' && roomId) {
+                            const ch = new BroadcastChannel(ROOM_CHAN(roomId));
+                            ch.onmessage = (e) => { if (e.data?.type === 'claim' && e.data.roomId === roomId) { otherTabHasRoom = true; } };
+                            ch.postMessage({ type: 'ping', roomId });
+                            setTimeout(() => {
+                                ch.close();
+                                rejoinCheckDone = true;
+
+                                if (otherTabHasRoom) showAlreadyOpenWithClose();
+                                else {
+                                    initPartyConnection();
+                                    pendingRejoinState = roomId;
+                                    if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
+                                    else { startRoomTabClaim(roomId); maybeRunRejoin(); }
+                                }
+                            }, 350);
+                        } else {
+                            rejoinCheckDone = true;
+                            if (otherTabHasRoom) showAlreadyOpenWithClose();
+                            else {
+                                initPartyConnection();
+                                pendingRejoinState = roomId;
+                                if (partyConnection) partyConnection.waitReady().then(() => { startRoomTabClaim(roomId); maybeRunRejoin(); });
+                                else { startRoomTabClaim(roomId); maybeRunRejoin(); }
+                            }
+                        }
+                    };
+                    setTimeout(runRejoinBC, REJOIN_BC_DELAY_MS);
                 }
-                if (!window.__lobbyRouteSettled) {
-                    window.__pendingLobbyState = serverState;
-                    return;
+                lobbyLog('13 before localStorage/savedHue', '');
+                const savedHue = localStorage.getItem('rummigrams_lobby_hue');
+                if (nameInput) nameInput.value = (localStorage.getItem('rummigrams_name') || '').trim().slice(0, MAX_PLAYER_NAME_LEN);
+                const defaultHue = Math.floor(Math.random() * 360);
+                const hue = savedHue !== null && savedHue !== '' ? Math.max(0, Math.min(360, parseInt(savedHue, 10))) : defaultHue;
+                selectedLobbyHue = Number.isNaN(hue) ? defaultHue : hue;
+                selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
+                setUserColorVar();
+                if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', String((selectedLobbyHue / 360) * 100));
+                if (lobbyHueTrack) lobbyHueTrack.setAttribute('aria-valuenow', String(selectedLobbyHue));
+                let creatorShownOptimistic = false;
+                if (playerListEl) {
+                    const justCreated = roomId && sessionStorage.getItem('rummigrams_created_room') === roomId;
+                    if (justCreated) {
+                        sessionStorage.removeItem('rummigrams_created_room');
+                        creatorShownOptimistic = true;
+                        const name = getLobbyName();
+                        const displayName = name || 'Player One';
+                        const esc = (s) => String(s).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+                        playerListEl.innerHTML = `<li class="lobby-player lobby-player--self"><span class="lobby-swatch"></span><span class="lobby-name">${esc(displayName)}</span><span class="lobby-tags">host · you</span></li>`;
+                    } else {
+                        playerListEl.innerHTML = '';
+                        playerListEl.setAttribute('aria-busy', 'true');
+                        appendLobbyGhostSlots(4);
+                    }
                 }
-                renderLobby(serverState);
-            }, () => !!sessionStorage.getItem(ROOM_ACTIVE_KEY(roomId)));
-            window.__onRouteSettled = (window.__onRouteSettled || []);
-            window.__onRouteSettled.push(() => {
-                window.__lobbyRouteSettled = true;
-                const pending = window.__pendingLobbyState;
-                if (rejoining && pending?.started) {
-                    lastLobbyState = { ...pending, boards: pending.boards || {} };
-                    rejoining = false;
-                    window.__pendingLobbyState = null;
-                    pendingRejoinState = roomId;
-                    maybeRunRejoin();
-                } else if (pending) {
-                    renderLobby(pending);
-                    window.__pendingLobbyState = null;
-                }
-                if (!hasAutoFocusedLobbyName && nameInput && !rejoining) {
-                    hasAutoFocusedLobbyName = true;
-                    nameInput.focus();
-                }
-            });
-            const sendJoin = () => {
-                const name = getLobbyName();
-                localStorage.setItem('rummigrams_name', name);
-                partyConnection.join(name, selectedLobbyColor);
-                if (lastLobbyState) {
-                    updateLocalSelf(p => {
-                        p.color = selectedLobbyColor;
-                        p.name = getLobbyName() || null;
+                lobbyLog('14 share URL section', 'getting shareUrlEl, shareWrap');
+                const shareUrlEl = $('lobby-share-url');
+                const shareWrap = $('lobby-share-wrap');
+                if (shareUrlEl && shareWrap && roomId) {
+                    const url = createShareUrl(roomId);
+                    shareUrlEl.textContent = url;
+                    const copyBtn = $('lobby-share-copy');
+                    lobbyLog('15 copy button', copyBtn ? 'adding click listener (clipboard only on click)' : 'no copyBtn');
+                    if (copyBtn) copyBtn.addEventListener('click', () => {
+                        navigator.clipboard?.writeText(url);
                     });
-                    renderLobby(lastLobbyState);
+                } else if (shareWrap) shareWrap.style.display = 'none';
+                const updateLocalSelf = (updater) => {
+                    if (!lastLobbyState || !myServerId) return;
+                    const players = lastLobbyState.players;
+                    if (!players || !players[myServerId]) return;
+                    updater(players[myServerId]);
+                };
+                const updateHueUi = () => {
+                    setUserColorVar();
+                    if (lobbyHueSliderWrap) lobbyHueSliderWrap.style.setProperty('--hue-pct', String((selectedLobbyHue / 360) * 100));
+                    if (lobbyHueTrack) lobbyHueTrack.setAttribute('aria-valuenow', String(selectedLobbyHue));
+                };
+                const setHueFromX = (clientX) => {
+                    if (!lobbyHueTrack) return;
+                    const rect = lobbyHueTrack.getBoundingClientRect();
+                    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                    selectedLobbyHue = Math.round(pct * 360);
+                    selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
+                    localStorage.setItem('rummigrams_lobby_hue', String(selectedLobbyHue));
+                    localStorage.setItem('rummigrams_color', selectedLobbyColor);
+                    updateHueUi();
+                    if (partyConnection?.ready) {
+                        const name = getLobbyName();
+                        localStorage.setItem('rummigrams_name', name);
+                        partyConnection.join(name, selectedLobbyColor);
+                    }
+                    if (lastLobbyState) {
+                        updateLocalSelf(p => {
+                            p.color = selectedLobbyColor;
+                            p.name = getLobbyName() || null;
+                        });
+                        renderLobby(lastLobbyState);
+                    }
+                };
+                updateHueUi();
+                if (lobbyHueTrack) {
+                    const onPointer = (e) => setHueFromX(e.clientX);
+                    const onUp = () => {
+                        document.removeEventListener('pointermove', onPointer);
+                        document.removeEventListener('pointerup', onUp);
+                        document.removeEventListener('pointercancel', onUp);
+                    };
+                    lobbyHueTrack.addEventListener('pointerdown', (e) => {
+                        e.preventDefault();
+                        setHueFromX(e.clientX);
+                        document.addEventListener('pointermove', onPointer);
+                        document.addEventListener('pointerup', onUp);
+                        document.addEventListener('pointercancel', onUp);
+                    });
+                    lobbyHueTrack.addEventListener('keydown', (e) => {
+                        const step = e.shiftKey ? 15 : 5;
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            selectedLobbyHue = Math.max(0, selectedLobbyHue - step);
+                        } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            selectedLobbyHue = Math.min(360, selectedLobbyHue + step);
+                        } else return;
+                        selectedLobbyColor = hslToHex(selectedLobbyHue, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
+                        localStorage.setItem('rummigrams_lobby_hue', String(selectedLobbyHue));
+                        localStorage.setItem('rummigrams_color', selectedLobbyColor);
+                        updateHueUi();
+                        if (partyConnection?.ready) {
+                            const name = getLobbyName();
+                            partyConnection.join(name, selectedLobbyColor);
+                        }
+                        if (lastLobbyState) {
+                            updateLocalSelf(p => {
+                                p.color = selectedLobbyColor;
+                                p.name = getLobbyName() || null;
+                            });
+                            renderLobby(lastLobbyState);
+                        }
+                    });
                 }
-            };
-            partyConnection.waitReady().then(sendJoin);
-            if (nameInput) {
-                nameInput.addEventListener('change', () => { if (partyConnection?.ready) sendJoin(); });
-                nameInput.addEventListener('input', () => { if (partyConnection?.ready) sendJoin(); });
-            }
-            const randomizeBtn = $('lobby-randomize-name');
-            if (randomizeBtn) randomizeBtn.addEventListener('click', () => {
-                randomizeLobbyName();
-                if (partyConnection?.ready) sendJoin();
-            });
-            if (startBtn) startBtn.addEventListener('click', () => {
-                if (partyConnection?.ready && isHost) {
-                    loadSettings();
-                    partyConnection.startGame(state.level.gridSize);
-                    startPartyGame();
-                }
-            });
-            if (joinBtn) joinBtn.addEventListener('click', () => {
-                if (partyConnection?.ready) partyConnection.joinGame();
-            });
-        };
-        if (!rejoining) initPartyConnection();
-        } // runLobbyInitRest
+
+
+                const playerOrderLabel = (joinOrder, players, id) => {
+                    const order = (joinOrder && joinOrder.length > 0) ? joinOrder : Object.keys(players || {}).sort();
+                    const idx = order.indexOf(id);
+                    const n = idx >= 0 ? idx + 1 : 1;
+                    if (n === 1) return 'One';
+                    if (n === 2) return 'Two';
+                    if (n === 3) return 'Three';
+                    return String(n);
+                };
+
+                const formatTileValue = v => ({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[v] ?? String(v));
+
+                const muteForDiamond = hex => {
+                    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return 'hsl(270 28% 48%)';
+                    const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+                    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+                    if (max === min) return `hsl(270 28% ${Math.round(48 + l * 14)}%)`;
+                    const d = max - min, s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                    let h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+                    h = Math.round(h * 60) % 360;
+                    const sat = Math.round(Math.min(s * 100 * 1.4, 42));
+                    const lit = Math.round(44 + l * 16);
+                    return `hsl(${h} ${sat}% ${lit}%)`;
+                };
+
+                const renderHeaderPlayerDiamonds = serverState => {
+                    const headerPlayers = document.getElementById('app')?.querySelector('#header-players');
+                    if (!headerPlayers || currentPhase !== 'game' || !serverState.started) {
+                        if (headerPlayers) headerPlayers.innerHTML = '';
+                        return;
+                    }
+                    const players = serverState.players || {};
+                    const boards = serverState.boards || {};
+                    const order = serverState.joinOrder || Object.keys(players).sort();
+                    headerPlayers.removeAttribute('aria-hidden');
+                    const existing = new Map([...headerPlayers.querySelectorAll('.header-player')].map(el => [el.dataset.playerId, el]));
+                    order.forEach((id, i) => {
+                        const p = players[id];
+                        if (!p) return;
+                        const raw = /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : '#64748b';
+                        const color = muteForDiamond(raw);
+                        const serverNameForPlayer = (p.name && String(p.name).trim()) || '';
+                        const name = (id === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
+                        const initial = name ? name[0].toUpperCase() : String(i + 1);
+                        const label = name || `Player ${['One', 'Two', 'Three'][i] ?? i + 1}`;
+                        let remaining = 0, total = 0;
+                        if (id === myServerId && state?.tiles?.size != null && state?.validation?.validPositions != null) {
+                            remaining = calcRemainingTiles(state, state.validation.validPositions);
+                            total = state.tiles.size;
+                        } else {
+                            const r = calcRemainingFromBoard(boards[id]);
+                            if (r) { remaining = r.remaining; total = r.total; }
+                        }
+                        const progress = total > 0 ? Math.min(100, Math.round(((total - remaining) / total) * 100)) : 0;
+                        const setProgress = (el, pct) => { if (el) el.style.setProperty('--progress', String(pct)); };
+                        const animateProgress = (el, toPct, duration = 280) => {
+                            if (!el) return;
+                            const fromPct = parseFloat(el.style.getPropertyValue('--progress')) || 0;
+                            if (Math.abs(fromPct - toPct) < 0.5) { setProgress(el, toPct); return; }
+                            const start = performance.now();
+                            const easeOutQuart = t => 1 - (1 - t) ** 4;
+                            const tick = () => {
+                                const elapsed = performance.now() - start;
+                                const t = Math.min(1, elapsed / duration);
+                                setProgress(el, fromPct + (toPct - fromPct) * easeOutQuart(t));
+                                if (t < 1) requestAnimationFrame(tick);
+                            };
+                            requestAnimationFrame(tick);
+                        };
+                        let btn = existing.get(id);
+                        if (btn) {
+                            existing.delete(id);
+                            btn.style.setProperty('--player-color', color);
+                            btn.setAttribute('aria-label', `${label} board`);
+                            const initEl = btn.querySelector('.header-player-initial');
+                            if (initEl) initEl.textContent = initial;
+                            animateProgress(btn, progress);
+                        } else {
+                            btn = document.createElement('button');
+                            btn.type = 'button';
+                            btn.className = 'header-player';
+                            btn.style.setProperty('--player-color', color);
+                            btn.style.setProperty('--progress', String(progress));
+                            btn.setAttribute('aria-label', `${label} board`);
+                            btn.dataset.playerId = id;
+                            btn.innerHTML = `<span class="header-player-initial">${initial}</span>`;
+                            btn.addEventListener('click', () => openPlayerBoardDialog(id));
+                            setProgress(btn, progress);
+                        }
+                        headerPlayers.appendChild(btn);
+                    });
+                    existing.forEach(btn => btn.remove());
+                };
+                renderHeaderPlayerDiamondsFn = renderHeaderPlayerDiamonds;
+
+                const openPlayerBoardDialog = playerId => {
+                    const overlay = document.getElementById('player-board-dialog-overlay');
+                    const titleEl = document.getElementById('player-board-dialog-title');
+                    const contentEl = document.getElementById('player-board-dialog-content');
+                    const headerEl = document.getElementById('player-board-dialog-header');
+                    if (!overlay || !titleEl || !contentEl) return;
+                    const players = lastLobbyState?.players || {};
+                    const boards = lastLobbyState?.boards || {};
+                    const order = lastLobbyState?.joinOrder || Object.keys(players).sort();
+                    headerEl?.classList.toggle('player-board-dialog-header--multi', order.length > 1);
+                    const p = players[playerId];
+                    const serverNameForPlayer = (p?.name && String(p.name).trim()) || '';
+                    const name = (playerId === myServerId ? (getLobbyName() || serverNameForPlayer) : serverNameForPlayer).trim() || '';
+                    const i = order.indexOf(playerId);
+                    const label = name || `Player ${['One', 'Two', 'Three'][i] ?? (i >= 0 ? i + 1 : 1)}`;
+                    titleEl.textContent = label;
+                    let board = boards[playerId];
+                    if ((!board || !board.gridSize) && playerId === myServerId) {
+                        board = {
+                            gridSize: state.level.gridSize,
+                            grid: [...state.grid.entries()],
+                            hand: [...state.hand],
+                            tiles: [...state.tiles.entries()]
+                        };
+                    }
+                    if (!board || !board.gridSize) {
+                        contentEl.innerHTML = '<p class="player-board-mini-label">No board data yet</p>';
+                    } else {
+                        const gridEntries = Array.isArray(board.grid) ? board.grid : (board.grid ? Object.entries(board.grid) : []);
+                        const tilesEntries = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
+                        const tilesMap = new Map(tilesEntries);
+                        const gridMap = new Map(gridEntries);
+                        const hand = board.hand || [];
+                        const size = board.gridSize;
+                        const valueGrid = new Map();
+                        for (const [pos, tileId] of gridMap) {
+                            const v = tilesMap.get(tileId);
+                            if (v != null) valueGrid.set(pos, v);
+                        }
+                        const validation = valueGrid.size ? validateBoard(valueGrid) : null;
+                        const tileClass = (pos) => {
+                            if (!validation) return 'player-board-mini-tile';
+                            if (validation.validPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--valid';
+                            if (validation.blockPositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--block-error';
+                            if (validation.impossiblePositions.has(pos)) return 'player-board-mini-tile player-board-mini-tile--impossible';
+                            return 'player-board-mini-tile';
+                        };
+                        let html = '';
+                        html += `<div class="player-board-mini-grid" style="grid-template-columns: repeat(${size}, 1.5rem); grid-template-rows: repeat(${size}, 1.5rem);">`;
+                        for (let y = 0; y < size; y++) {
+                            for (let x = 0; x < size; x++) {
+                                const pos = `${x},${y}`;
+                                const tileId = gridMap.get(pos);
+                                const val = tileId != null ? tilesMap.get(tileId) : null;
+                                html += `<div class="player-board-mini-cell">${val != null ? `<span class="${tileClass(pos)}">${formatTileValue(val)}</span>` : ''}</div>`;
+                            }
+                        }
+                        html += '</div>';
+                        html += '<div class="player-board-mini-rack">';
+                        hand.forEach(id => {
+                            const v = tilesMap.get(id);
+                            if (v != null) html += `<span class="player-board-mini-tile">${formatTileValue(v)}</span>`;
+                        });
+                        html += '</div>';
+                        contentEl.innerHTML = html;
+                    }
+                    overlay.dataset.viewingPlayerId = playerId;
+                    overlay.classList.add('open');
+                };
+
+                const prevBtn = gamePage.querySelector('#player-board-dialog-prev');
+                const nextBtn = gamePage.querySelector('#player-board-dialog-next');
+                if (prevBtn) prevBtn.addEventListener('click', () => {
+                    const overlay = document.getElementById('player-board-dialog-overlay');
+                    if (!overlay?.classList.contains('open')) return;
+                    const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
+                    if (order.length <= 1) return;
+                    const current = overlay.dataset.viewingPlayerId;
+                    const i = order.indexOf(current);
+                    const prevId = order[(i - 1 + order.length) % order.length];
+                    openPlayerBoardDialog(prevId);
+                });
+                if (nextBtn) nextBtn.addEventListener('click', () => {
+                    const overlay = document.getElementById('player-board-dialog-overlay');
+                    if (!overlay?.classList.contains('open')) return;
+                    const order = lastLobbyState?.joinOrder || Object.keys(lastLobbyState?.players || {}).sort();
+                    if (order.length <= 1) return;
+                    const current = overlay.dataset.viewingPlayerId;
+                    const i = order.indexOf(current);
+                    const nextId = order[(i + 1) % order.length];
+                    openPlayerBoardDialog(nextId);
+                });
+
+                closePlayerBoardDialog = () => {
+                    const overlay = document.getElementById('player-board-dialog-overlay');
+                    if (overlay) {
+                        delete overlay.dataset.viewingPlayerId;
+                        overlay.classList.remove('open');
+                    }
+                };
+
+                const renderLobby = serverState => {
+                    lobbyLog('16 renderLobby', 'called');
+                    lastLobbyState = serverState;
+                    const players = serverState.players || {};
+                    const joinOrder = serverState.joinOrder || [];
+                    const hostId = serverState.hostId || null;
+                    if (myServerId) isHost = hostId === myServerId;
+                    if (playerListEl) {
+                        playerListEl.removeAttribute('aria-busy');
+                        playerListEl.innerHTML = '';
+                        Object.entries(players).forEach(([id, p]) => {
+                            const li = document.createElement('li');
+                            li.className = id === myServerId ? 'lobby-player lobby-player--self' : 'lobby-player';
+                            const raw = id === myServerId ? selectedLobbyColor : (p.color || '#64748b');
+                            const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : '#64748b';
+                            const serverName = (p.name && String(p.name).trim()) || '';
+                            const localName = getLobbyName();
+                            const orderLabel = playerOrderLabel(joinOrder, players, id);
+                            const displayName = id === myServerId
+                                ? (localName || serverName || `Player ${orderLabel}`)
+                                : (serverName || `Player ${orderLabel}`);
+                            const name = String(displayName).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+                            const tags = [];
+                            if (id === hostId) tags.push('host');
+                            if (id === myServerId) tags.push('you');
+                            const swatchStyle = id === myServerId ? '' : ` style="background:${color}"`;
+                            li.innerHTML = `<span class="lobby-swatch"${swatchStyle}></span><span class="lobby-name">${name}</span>${tags.length ? `<span class="lobby-tags">${tags.join(' · ')}</span>` : ''}`;
+                            playerListEl.appendChild(li);
+                        });
+                    }
+                    if (startBtn) {
+                        const disabled = !isHost || !Object.keys(players).length || !!serverState.started;
+                        startBtn.disabled = disabled;
+                        startBtn.setAttribute('aria-disabled', String(disabled));
+                        startBtn.style.display = serverState.started ? 'none' : (isHost ? '' : 'none');
+                    }
+                    if (lobbyWaitEl) lobbyWaitEl.style.display = (serverState.started || isHost) ? 'none' : '';
+                    if (joinBtn) {
+                        const canJoin = serverState.started && !serverState.boards?.[myServerId];
+                        joinBtn.style.display = canJoin ? '' : 'none';
+                        joinBtn.disabled = !canJoin;
+                        joinBtn.setAttribute('aria-disabled', String(!canJoin));
+                    }
+                    if (serverState.started && serverState.boards?.[myServerId]) startPartyGame();
+                };
+
+                window.__pendingLobbyState = null;
+                const initPartyConnection = () => {
+                    lobbyLog('17 initPartyConnection', partyConnection ? 'already exists, return' : 'calling createPartyConnection');
+                    if (partyConnection) return;
+                    partyConnection = createPartyConnection((serverState, myId) => {
+                        if (serverState?.rejected) {
+
+                            showAlreadyOpenUI('serverRejected');
+                            if (partyConnection) { partyConnection.close(); partyConnection = null; }
+                            return;
+                        }
+                        if (myId && !myServerId) myServerId = myId;
+                        if (!myServerId && serverState.players && Object.keys(serverState.players).length === 1)
+                            myServerId = Object.keys(serverState.players)[0];
+                        const mergedBoards = { ...(lastLobbyState?.boards || {}), ...(serverState.boards || {}) };
+                        lastLobbyState = { ...serverState, boards: mergedBoards };
+                        if (currentPhase === 'game') {
+                            if (serverState.started) renderHeaderPlayerDiamonds(serverState);
+                            const openOverlay = document.getElementById('player-board-dialog-overlay');
+                            if (openOverlay?.classList.contains('open')) {
+                                const openId = openOverlay.dataset.viewingPlayerId;
+                                if (openId) openPlayerBoardDialog(openId);
+                            }
+                            return;
+                        }
+                        if (rejoining && window.__lobbyRouteSettled && serverState.started) {
+                            rejoining = false;
+                            pendingRejoinState = roomId;
+                            maybeRunRejoin();
+                            return;
+                        }
+                        if (creatorShownOptimistic && serverState.players) {
+                            const ids = Object.keys(serverState.players);
+                            const only = ids.length === 1 && serverState.players[ids[0]];
+                            if (ids.length === 1 && only && only.name == null && only.color == null) {
+                                if (serverState.started) startPartyGame();
+                                return;
+                            }
+                            creatorShownOptimistic = false;
+                        }
+                        if (!window.__lobbyRouteSettled) {
+                            window.__pendingLobbyState = serverState;
+                            return;
+                        }
+                        renderLobby(serverState);
+                    }, () => !!sessionStorage.getItem(ROOM_ACTIVE_KEY(roomId)));
+                    lobbyLog('18 createPartyConnection done', 'registering onRouteSettled');
+                    window.__onRouteSettled = (window.__onRouteSettled || []);
+                    window.__onRouteSettled.push(() => {
+                        window.__lobbyRouteSettled = true;
+                        const pending = window.__pendingLobbyState;
+                        if (rejoining && pending?.started) {
+                            lastLobbyState = { ...pending, boards: pending.boards || {} };
+                            rejoining = false;
+                            window.__pendingLobbyState = null;
+                            pendingRejoinState = roomId;
+                            maybeRunRejoin();
+                        } else if (pending) {
+                            renderLobby(pending);
+                            window.__pendingLobbyState = null;
+                        }
+                        if (!hasAutoFocusedLobbyName && nameInput && !rejoining) {
+                            hasAutoFocusedLobbyName = true;
+                            lobbyLog('21 focus', 'nameInput.focus()');
+                            nameInput.focus();
+                        }
+                    });
+                    const sendJoin = () => {
+                        const name = getLobbyName();
+                        localStorage.setItem('rummigrams_name', name);
+                        partyConnection.join(name, selectedLobbyColor);
+                        if (lastLobbyState) {
+                            updateLocalSelf(p => {
+                                p.color = selectedLobbyColor;
+                                p.name = getLobbyName() || null;
+                            });
+                            renderLobby(lastLobbyState);
+                        }
+                    };
+                    lobbyLog('19 waitReady().then(sendJoin)', '');
+                    partyConnection.waitReady().then(sendJoin);
+                    if (nameInput) {
+                        nameInput.addEventListener('change', () => { if (partyConnection?.ready) sendJoin(); });
+                        nameInput.addEventListener('input', () => { if (partyConnection?.ready) sendJoin(); });
+                    }
+                    const randomizeBtn = $('lobby-randomize-name');
+                    if (randomizeBtn) randomizeBtn.addEventListener('click', () => {
+                        randomizeLobbyName();
+                        if (partyConnection?.ready) sendJoin();
+                    });
+                    if (startBtn) startBtn.addEventListener('click', () => {
+                        if (partyConnection?.ready && isHost) {
+                            loadSettings();
+                            partyConnection.startGame(state.level.gridSize);
+                            startPartyGame();
+                        }
+                    });
+                    if (joinBtn) joinBtn.addEventListener('click', () => {
+                        if (partyConnection?.ready) partyConnection.joinGame();
+                    });
+                };
+                lobbyLog('20 branch', !rejoining ? '!rejoining -> initPartyConnection()' : 'rejoining -> skip initPartyConnection');
+                if (!rejoining) initPartyConnection();
+            } // runLobbyInitRest
         } // runLobbyInit
     } else if (!forceNewGame && loadSavedGame()) {
         setPhase('game');

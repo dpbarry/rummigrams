@@ -330,6 +330,7 @@
         import { initGame } from './js/app.js';
         import { initScrollFade } from './js/scrollfade.js';
 
+        console.warn('[Rummigrams Lobby] G1 game.html script', 'imports done, about to initGame()');
         document.getElementById('btn-home').addEventListener('click', () => {
             Router('home.html');
         });
@@ -337,6 +338,7 @@
         initScrollFade(document.getElementById('info-dialog-content'));
 
         initGame();
+        console.warn('[Rummigrams Lobby] G2 game.html script', 'initGame() returned, __pageReady=true');
         window.__pageReady = true;
     </script>
 
