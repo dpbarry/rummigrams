@@ -1,0 +1,248 @@
+const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const shuffle = (arr) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+const pick = (arr) => arr[randInt(0, arr.length - 1)];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+const wouldCreateBlock = (grid, x, y) => {
+  const checks = [
+    [[0, 0], [1, 0], [0, 1], [1, 1]],
+    [[-1, 0], [0, 0], [-1, 1], [0, 1]],
+    [[0, -1], [1, -1], [0, 0], [1, 0]],
+    [[-1, -1], [0, -1], [-1, 0], [0, 0]]
+  ];
+  return checks.some((offsets) =>
+    offsets.every(([dx, dy]) => (dx === 0 && dy === 0) || grid.has(`${x + dx},${y + dy}`))
+  );
+};
+
+const calcDifficultyParams = (difficulty, gridSize) => {
+  const t = clamp((difficulty - 1) / 9, 0, 1);
+  const baseArea = gridSize * gridSize;
+  const baseFill = lerp(0.25, 0.82, t);
+  const variance = (Math.random() - 0.5) * 0.16;
+  const fillFactor = clamp(baseFill + variance, 0.2, 0.88);
+  const targetTiles = Math.max(6, Math.round(baseArea * fillFactor));
+  const valueSpread = Math.round(lerp(5, 13, t));
+  const minValue = 1;
+  const maxValue = minValue + valueSpread - 1;
+  const runBias = lerp(0.25, 0.75, t);
+  const avgGroupLen = lerp(3.6, 3.1, t);
+  const maxPerValue = Math.max(3, Math.ceil(targetTiles * lerp(0.45, 0.28, t)));
+  const branchChance = lerp(0.45, 0.92, t);
+  const compactness = lerp(0.1, 0.95, t);
+  return { minValue, maxValue, gridSize, targetTiles, runBias, avgGroupLen, maxPerValue, branchChance, compactness };
+};
+
+const generateGroup = (params, valueCounts, anchorValue = null, isRun = null) => {
+  const { minValue, maxValue, avgGroupLen, maxPerValue, runBias } = params;
+  const len = Math.random() < 0.5 ? 3 : Math.random() < avgGroupLen - 3 ? 4 : 3;
+  const useRun = isRun !== null ? isRun : Math.random() < runBias;
+
+  if (useRun) {
+    const possibleStarts = [];
+    for (let start = minValue; start <= maxValue - len + 1; start++) {
+      const vals = Array.from({ length: len }, (_, i) => start + i);
+      const canUse = vals.every((v) => (valueCounts.get(v) || 0) < maxPerValue);
+      const matchesAnchor = anchorValue === null || vals.includes(anchorValue);
+      if (canUse && matchesAnchor) possibleStarts.push({ start, idx: anchorValue !== null ? vals.indexOf(anchorValue) : 0 });
+    }
+    if (possibleStarts.length) {
+      const choice = pick(possibleStarts);
+      return { values: Array.from({ length: len }, (_, i) => choice.start + i), anchorIdx: choice.idx, isRun: true };
+    }
+  }
+
+  const available = [];
+  for (let v = minValue; v <= maxValue; v++) {
+    if ((valueCounts.get(v) || 0) + len <= maxPerValue && (anchorValue === null || v === anchorValue)) available.push(v);
+  }
+  if (available.length) {
+    const val = pick(available);
+    return { values: Array(len).fill(val), anchorIdx: 0, isRun: false };
+  }
+  return null;
+};
+
+const tryPlaceGroup = (grid, values, startX, startY, horizontal, gridSize) => {
+  const positions = values.map((v, i) => ({
+    x: horizontal ? startX + i : startX,
+    y: horizontal ? startY : startY + i,
+    value: v
+  }));
+  const valid = positions.every(({ x, y }) => {
+    const pos = `${x},${y}`;
+    return x >= 0 && x < gridSize && y >= 0 && y < gridSize && !grid.has(pos) && !wouldCreateBlock(grid, x, y);
+  });
+  if (valid) positions.forEach(({ x, y, value }) => grid.set(`${x},${y}`, value));
+  return valid ? positions : null;
+};
+
+const findBranchPoints = (grid, gridSize, compactness) => {
+  const points = [];
+  const center = (gridSize - 1) / 2;
+  for (const [pos, value] of grid) {
+    const [x, y] = pos.split(',').map(Number);
+    const hasH = grid.has(`${x - 1},${y}`) || grid.has(`${x + 1},${y}`);
+    const hasV = grid.has(`${x},${y - 1}`) || grid.has(`${x},${y + 1}`);
+    if (hasH && !hasV) points.push({ x, y, value, dir: 'v' });
+    else if (hasV && !hasH) points.push({ x, y, value, dir: 'h' });
+  }
+  points.forEach((p) => {
+    const dist = Math.abs(p.x - center) + Math.abs(p.y - center);
+    p.score = (compactness > 0.5 ? -dist : dist) + Math.random() * 2;
+  });
+  points.sort((a, b) => b.score - a.score);
+  return points;
+};
+
+const generatePuzzleAttempt = (params) => {
+  const { minValue, maxValue, gridSize, targetTiles, maxPerValue, branchChance, compactness } = params;
+  const grid = new Map();
+  const valueCounts = new Map();
+  const center = Math.max(0, Math.floor(gridSize / 2) - 1);
+  const addToCount = (values) => values.forEach((v) => valueCounts.set(v, (valueCounts.get(v) || 0) + 1));
+
+  const seed = generateGroup(params, valueCounts);
+  if (!seed) return null;
+  const horizontal = Math.random() > 0.5;
+  const placed = tryPlaceGroup(grid, seed.values, center, center, horizontal, gridSize);
+  if (!placed) return null;
+  addToCount(seed.values);
+
+  let stalls = 0;
+  while (grid.size < targetTiles && stalls < 80) {
+    const branches = findBranchPoints(grid, gridSize, compactness);
+    if (!branches.length) { stalls++; continue; }
+    let added = false;
+    for (let i = 0; i < branches.length; i++) {
+      const branch = branches[i];
+      if (compactness < 0.3 && Math.random() < 0.3) continue;
+      if (grid.size >= targetTiles) break;
+      if (Math.random() > branchChance) continue;
+      const isH = branch.dir === 'h';
+      const group = generateGroup(params, valueCounts, branch.value, null);
+      if (!group) continue;
+      const anchorIdx = group.values.indexOf(branch.value);
+      if (anchorIdx === -1) continue;
+      const startX = isH ? branch.x - anchorIdx : branch.x;
+      const startY = isH ? branch.y : branch.y - anchorIdx;
+      const testGrid = new Map(grid);
+      const newPositions = [];
+      let valid = true;
+      for (let k = 0; k < group.values.length && valid; k++) {
+        const x = isH ? startX + k : startX;
+        const y = isH ? startY : startY + k;
+        const pos = `${x},${y}`;
+        if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) { valid = false; continue; }
+        if (pos === `${branch.x},${branch.y}`) continue;
+        if (testGrid.has(pos)) { valid = false; continue; }
+        testGrid.set(pos, group.values[k]);
+        if (wouldCreateBlock(testGrid, x, y)) { valid = false; continue; }
+        newPositions.push({ x, y, value: group.values[k] });
+      }
+      if (valid && newPositions.length >= 2) {
+        newPositions.forEach(({ x, y, value }) => grid.set(`${x},${y}`, value));
+        addToCount(newPositions.map((p) => p.value));
+        added = true;
+        break;
+      }
+    }
+    if (!added) stalls++;
+  }
+  return { grid, tiles: Array.from(grid.values()) };
+};
+
+const isSolvable = (tiles) => {
+  if (tiles.length === 0) return true;
+  const counts = new Map();
+  tiles.forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
+  const solve = (remaining) => {
+    if (remaining.size === 0) return true;
+    const values = Array.from(remaining.keys()).sort((a, b) => a - b);
+    const minVal = values[0];
+    const minCount = remaining.get(minVal);
+    for (let setSize = 3; setSize <= minCount; setSize++) {
+      const next = new Map(remaining);
+      next.set(minVal, minCount - setSize);
+      if (next.get(minVal) === 0) next.delete(minVal);
+      if (solve(next)) return true;
+    }
+    let maxRunLen = 1;
+    while (remaining.has(minVal + maxRunLen)) maxRunLen++;
+    for (let runLen = 3; runLen <= maxRunLen; runLen++) {
+      const next = new Map(remaining);
+      let valid = true;
+      for (let i = 0; i < runLen; i++) {
+        const val = minVal + i;
+        if (!remaining.has(val)) { valid = false; break; }
+        const newCount = remaining.get(val) - 1;
+        if (newCount > 0) next.set(val, newCount);
+        else next.delete(val);
+      }
+      if (valid && solve(next)) return true;
+    }
+    return false;
+  };
+  return solve(counts);
+};
+
+const meetsQuality = (tiles, targetTiles, params) => {
+  const counts = new Map();
+  tiles.forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
+  const maxCount = Math.max(...counts.values());
+  const uniqueValues = counts.size;
+  const maxAllowed = params.maxPerValue + 1;
+  const minUnique = Math.max(3, Math.ceil(targetTiles / 6));
+  const threshold = lerp(0.65, 0.88, params.compactness);
+  return tiles.length >= targetTiles * threshold && maxCount <= maxAllowed && uniqueValues >= minUnique && isSolvable(tiles);
+};
+
+const generatePuzzle = (opts = {}) => {
+  const difficulty = opts.difficulty ?? 5;
+  const gridSize = opts.gridSize ?? 6;
+  const params = calcDifficultyParams(difficulty, gridSize);
+  if (opts.targetTiles != null) params.targetTiles = Math.max(3, opts.targetTiles);
+
+  let bestSolvable = null;
+  let bestAny = null;
+  let maxSolvableTiles = -1;
+  let maxAnyTiles = -1;
+
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const result = generatePuzzleAttempt(params);
+    if (result) {
+      const tileCount = result.tiles.length;
+      const solvable = isSolvable(result.tiles);
+      if (solvable && tileCount > maxSolvableTiles) {
+        maxSolvableTiles = tileCount;
+        bestSolvable = result;
+      }
+      if (tileCount > maxAnyTiles) {
+        maxAnyTiles = tileCount;
+        bestAny = result;
+      }
+      if (meetsQuality(result.tiles, params.targetTiles, params)) return result;
+    }
+  }
+  if (bestSolvable && bestSolvable.tiles.length >= 9) return bestSolvable;
+  if (bestAny && bestAny.tiles.length >= 8 && isSolvable(bestAny.tiles)) return bestAny;
+  const relaxed = { ...params, targetTiles: Math.floor(params.targetTiles * 0.6) };
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const result = generatePuzzleAttempt(relaxed);
+    if (result && isSolvable(result.tiles)) return result;
+  }
+  return { grid: new Map(), tiles: [] };
+};
+
+export const generateLevel = (opts = {}) => {
+  const { tiles } = generatePuzzle(opts);
+  return { hand: shuffle([...tiles]) };
+};

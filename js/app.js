@@ -4,11 +4,14 @@ import { generateLevel } from './generator.js';
 import { saveGame, loadGame, savePartyGame, loadPartyGame, clearPartyGame } from './storage.js';
 import {
     renderRack, positionTileOnGrid, returnTileToRack, updateTileStates, renderGridCells,
-    initParticleBurstSystem, createCellParticleBurst, triggerVictory, createConfetti, repositionPlacedTiles, initRackTransition, cleanupParticleBurstSystem
+    initParticleBurstSystem, createCellParticleBurst, triggerVictory, successAnimation, startAuroraBackground, hideAuroraBackground, repositionPlacedTiles, initRackTransition, cleanupParticleBurstSystem,
+    triggerAdvancePulse, triggerWinnerPulse
 } from './renderer.js';
+
 import { initInteractions } from './interactions.js';
 import { initToolbar, calcRemainingTiles, updateRemainingCounter } from './toolbar.js';
 import { initSelection } from './selection.js';
+import { initContextMenu } from './contextmenu.js';
 import { initScrollFade } from './scrollfade.js';
 import { isMultiplayer, createPartyConnection, getPartyRoomId, createShareUrl } from './party.js';
 
@@ -117,7 +120,6 @@ let lobbyEl, nameInput, playerListEl, startBtn, lobbyWaitEl, joinBtn, lobbyHueTr
 let selectedLobbyHue = 24;
 let selectedLobbyColor = hslToHex(24, LOBBY_COLOR_SAT, LOBBY_COLOR_LIGHT);
 let currentPhase = 'game';
-let hasAutoFocusedLobbyName = false;
 
 function randomizeLobbyName() {
     const firstNames = ["Desparate", "Unlikely", "Plausible", "Foolhardy", "Severe", "Amazing", "Striving", "Witty", "Immortal", "Defiant", "Wondrous", "Wise", "Luminous", "Speedy"]
@@ -152,7 +154,9 @@ const calcRemainingFromBoard = board => {
     for (const [pos] of gridMap) {
         if (validation.validPositions.has(pos)) inValid++;
     }
-    return { remaining: total - inValid, total };
+    let remaining = total - inValid;
+    if (remaining === 0 && !validation.valid) remaining = 1;
+    return { remaining, total };
 };
 
 let partyConnection = null;
@@ -161,6 +165,10 @@ let isHost = false;
 let gamePage = null;
 let renderHeaderPlayerDiamondsFn = null;
 let lastLobbyState = null;
+let lastShownAdvancedStage = 0;
+let lastShownWinnerId = null;
+let multiplayerCompleteSent = false;
+let partyTransitionInProgress = false;
 let roomTabChannel = null;
 let roomTabClaimInterval = null;
 let roomTabClaimRoomId = null;
@@ -251,36 +259,103 @@ const startPartyGame = () => {
     if (currentPhase !== 'lobby') return;
     currentPhase = 'transitioning';
     const myBoard = lastLobbyState?.boards?.[myServerId];
-    if (myBoard?.gridSize != null) state.level.gridSize = myBoard.gridSize;
-    newGame();
+    if (myBoard && typeof myBoard.gridSize === 'number') applyServerBoardAndRender(myBoard);
+    else newGame();
     runPartyLobbyToGameTransition();
 };
 
 const runPartyLobbyToGameTransition = async () => {
+    if (partyTransitionInProgress) return;
     const lobbyPage = document.querySelector('.page.lobby');
-    if (!lobbyPage || !gamePage) { currentPhase = 'game'; return; }
-    const rid = getPartyRoomId();
-    if (rid) setRoomActive(rid, String(Date.now()));
+    const gp = gamePage;
+    if (!lobbyPage || !gp) { currentPhase = 'game'; return; }
+    partyTransitionInProgress = true;
+    try {
+        const rid = getPartyRoomId();
+        if (rid) setRoomActive(rid, String(Date.now()));
 
-    gamePage.querySelector('.game-container')?.style.removeProperty('display');
-    gamePage.querySelector('.controls-bar')?.style.removeProperty('display');
-    gamePage.querySelector('.rack-container')?.style.removeProperty('display');
+        const gc = gp.querySelector('.game-container');
+        const cb = gp.querySelector('.controls-bar');
+        const rc = gp.querySelector('.rack-container');
+        if (gc?.style) gc.style.removeProperty('display');
+        if (cb?.style) cb.style.removeProperty('display');
+        if (rc?.style) rc.style.removeProperty('display');
 
-    await window.runPageTransition(lobbyPage, gamePage, true);
+        await window.runPageTransition(lobbyPage, gp, true);
 
-    lobbyPage.remove();
-    gamePage.style.zIndex = '';
-    gamePage.style.transition = '';
-    gamePage.style.transform = '';
-    gamePage = null;
-    currentPhase = 'game';
-    const roomId = getPartyRoomId();
-    if (roomId) savePartyGame(roomId, state, getLobbyName(), selectedLobbyColor, selectedLobbyHue);
-    sendPartyBoardStateNow();
-    startPartyBoardSyncInterval();
-    if (lastLobbyState?.started) renderHeaderPlayerDiamondsFn?.(lastLobbyState);
-    window.__clearPartyGameOnLeave = () => { const id = getPartyRoomId(); if (id) clearPartyGame(id); };
-    startRoomTabClaim(roomId);
+        if (lobbyPage.parentNode) lobbyPage.remove();
+        if (gp?.style) {
+            gp.style.zIndex = '';
+            gp.style.transition = '';
+            gp.style.transform = '';
+        }
+        gamePage = null;
+        currentPhase = 'game';
+        const roomId = getPartyRoomId();
+        if (roomId) savePartyGame(roomId, state, getLobbyName(), selectedLobbyColor, selectedLobbyHue);
+        const myBoard = lastLobbyState?.boards?.[myServerId];
+        if (myBoard && typeof myBoard.gridSize === 'number') applyServerBoardAndRender(myBoard);
+        requestAnimationFrame(() => {
+            const gridEl = document.getElementById('game-grid');
+            const n = state.level.gridSize * state.level.gridSize;
+            if (gridEl && gridEl.querySelectorAll('.grid-cell').length !== n) {
+                renderGridCells(gridEl, state.level.gridSize, state.level.gridSize);
+                if (!particleBurstInitialized) { initParticleBurstSystem(gridEl); particleBurstInitialized = true; }
+                state.grid.forEach((id, pos) => {
+                    const [x, y] = pos.split(',').map(Number);
+                    const value = state.tiles.get(id);
+                    if (value == null) return;
+                    const tile = document.createElement('div');
+                    tile.id = id;
+                    tile.className = 'tile tile--placed';
+                    tile.setAttribute('role', 'listitem');
+                    tile.setAttribute('tabindex', '0');
+                    tile.dataset.value = value;
+                    tile.dataset.gridX = x;
+                    tile.dataset.gridY = y;
+                    tile.innerHTML = `<span class="tile__number">${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[value] ?? value)}</span>`;
+                    gridEl.appendChild(tile);
+                    positionTileOnGrid(tile, x, y, gridEl);
+                });
+            }
+        });
+        sendPartyBoardStateNow();
+        startPartyBoardSyncInterval();
+        if (lastLobbyState?.started) renderHeaderPlayerDiamondsFn?.(lastLobbyState);
+        window.__clearPartyGameOnLeave = () => { const id = getPartyRoomId(); if (id) clearPartyGame(id); };
+        startRoomTabClaim(roomId);
+    } finally {
+        partyTransitionInProgress = false;
+    }
+};
+
+const transitionToGamePageAndShowLeaderboard = async (serverState) => {
+    if (partyTransitionInProgress) return;
+    const lobbyPage = document.querySelector('.page.lobby');
+    const gp = gamePage;
+    if (!lobbyPage || !gp) return;
+    partyTransitionInProgress = true;
+    try {
+        const app = gp.querySelector('.app');
+        const gc = app?.querySelector('.game-container');
+        const cb = app?.querySelector('.controls-bar');
+        const rc = app?.querySelector('.rack-container');
+        if (gc?.style) gc.style.setProperty('display', 'none');
+        if (cb?.style) cb.style.setProperty('display', 'none');
+        if (rc?.style) rc.style.setProperty('display', 'none');
+        await window.runPageTransition(lobbyPage, gp, true);
+        if (lobbyPage.parentNode) lobbyPage.remove();
+        if (gp?.style) {
+            gp.style.zIndex = '';
+            gp.style.transition = '';
+            gp.style.transform = '';
+        }
+        gamePage = null;
+        currentPhase = 'game';
+        showLeaderboard(serverState);
+    } finally {
+        partyTransitionInProgress = false;
+    }
 };
 
 const runRejoinFlow = (roomId) => {
@@ -309,11 +384,13 @@ const setPhase = phase => {
     if (rackContainer) rackContainer.style.display = phase === 'game' ? '' : 'none';
 };
 
+let lastInteractedPos = null;
 const placeTile = (id, x, y) => {
     const el = $(id);
     if (!el) return;
     state.grid.set(`${x},${y}`, id);
     state.hand.delete(id);
+    lastInteractedPos = { x, y };
     positionTileOnGrid(el, x, y, gridEl);
     runValidation();
     saveState();
@@ -350,6 +427,7 @@ const swapTiles = (draggedId, draggedOrigPos, occupantId, targetX, targetY) => {
         state.hand.add(occupantId);
         returnTileToRack(occupantEl, rackEl);
     }
+    lastInteractedPos = { x: targetX, y: targetY };
 
     runValidation();
     saveState();
@@ -369,21 +447,45 @@ const runValidation = () => {
     state.validation = validateBoard(grid);
     updateTileStates(gridEl, state.validation.validPositions, state.validation.blockPositions, state.validation.impossiblePositions);
 
-    const remaining = calcRemainingTiles(state, state.validation.validPositions);
-    if (!state.hand.size && remaining === 0 && state.validation.valid) return handleVictory();
+    let remaining = calcRemainingTiles(state, state.validation.validPositions);
+    if (remaining === 0 && !state.validation.valid) remaining = 1;
+    if (state.isVictory && (remaining > 0 || !state.validation.valid)) {
+        state.isVictory = false;
+        gridEl.querySelectorAll('.tile--victory').forEach(t => {
+            t.classList.remove('tile--victory');
+            t.style.transitionDelay = '';
+            t.style.animationDelay = '';
+        });
+        hideAuroraBackground();
+    }
+    if (!state.hand.size && remaining === 0 && state.validation.valid && !state.isVictory) return handleVictory();
 
     updateRemainingCounter(remaining);
     if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
 };
 
+let auroraStarted = false;
 const handleVictory = () => {
+    if (state.isVictory) return;
     state.isVictory = true;
-    saveState();
+    if (isMultiplayer() && partyConnection?.ready) {
+        if (multiplayerCompleteSent) return;
+        multiplayerCompleteSent = true;
+        partyConnection.completeBoard();
+        updateRemainingCounter(0, true);
+        saveState();
+        if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
+        return;
+    }
+    if (!auroraStarted) {
+        requestAnimationFrame(() => { if (startAuroraBackground()) auroraStarted = true; });
+    } else {
+        startAuroraBackground();
+    }
     updateRemainingCounter(0, true);
+    saveState();
     if (lastLobbyState?.started && renderHeaderPlayerDiamondsFn) requestAnimationFrame(() => renderHeaderPlayerDiamondsFn(lastLobbyState));
-    triggerVictory(gridEl);
-    if (partyConnection?.ready) partyConnection.completeBoard();
-    setTimeout(() => createConfetti(40), 300);
+    triggerVictory(gridEl, lastInteractedPos);
 };
 
 const handleTilesReturn = ids => {
@@ -487,14 +589,163 @@ const applySavedStateAndRender = (saved) => {
         tile.dataset.value = value;
         tile.dataset.gridX = x;
         tile.dataset.gridY = y;
-        tile.innerHTML = `<span class="tile__number">${value <= 10 ? value : ['J', 'Q', 'K'][value - 11]}</span>`;
+        tile.innerHTML = `<span class="tile__number">${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[value] ?? value)}</span>`;
         gridEl.appendChild(tile);
         positionTileOnGrid(tile, x, y, gridEl);
     });
     runValidation();
     if (state.isVictory) {
         updateRemainingCounter(0, true);
-        triggerVictory(gridEl);
+        if (!auroraStarted) requestAnimationFrame(() => { if (startAuroraBackground()) auroraStarted = true; });
+        else startAuroraBackground();
+        triggerVictory(gridEl, null);
+    }
+};
+
+const tilesToAddOnAdvance = (stage) => Math.max(4, Math.ceil(((stage + 1) ** 2 - stage ** 2) / 2));
+const doLocalAdvance = () => {
+    const gridElLive = document.getElementById('game-grid');
+    const rackElLive = document.getElementById('tile-rack');
+    if (!gridElLive || !rackElLive) return;
+    const stage = state.level.gridSize;
+    const nextSize = stage + 1;
+    if (nextSize > 8) return;
+    const addCount = tilesToAddOnAdvance(stage);
+    const pool = [...state.tiles.values()].filter(v => typeof v === 'number' && v >= 1 && v <= 13);
+    const values = pool.length ? pool : Array.from({ length: 13 }, (_, i) => i + 1);
+    const ts = Date.now();
+    for (let i = 0; i < addCount; i++) {
+        const id = `adv-local-${ts}-${i}`;
+        const value = values[Math.floor(Math.random() * values.length)];
+        state.tiles.set(id, value);
+        state.hand.add(id);
+    }
+    state.level.gridSize = nextSize;
+    state.validation = null;
+    renderGridCells(gridElLive, nextSize, nextSize);
+    if (!particleBurstInitialized) { initParticleBurstSystem(gridElLive); particleBurstInitialized = true; }
+    renderRack(rackElLive, state.tiles, state.hand);
+    state.grid.forEach((id, pos) => {
+        const [x, y] = pos.split(',').map(Number);
+        const value = state.tiles.get(id);
+        if (value == null) return;
+        const existing = document.getElementById(id);
+        if (existing) existing.remove();
+        const tile = document.createElement('div');
+        tile.id = id;
+        tile.className = 'tile tile--placed';
+        tile.setAttribute('role', 'listitem');
+        tile.setAttribute('tabindex', '0');
+        tile.dataset.value = value;
+        tile.dataset.gridX = x;
+        tile.dataset.gridY = y;
+        tile.innerHTML = `<span class="tile__number">${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[value] ?? value)}</span>`;
+        gridElLive.appendChild(tile);
+        positionTileOnGrid(tile, x, y, gridElLive);
+    });
+    runValidation();
+    saveState();
+};
+
+const applyServerBoardAndRender = (board) => {
+    if (!board || typeof board.gridSize !== 'number') return;
+    const gridElLive = document.getElementById('game-grid');
+    const rackElLive = document.getElementById('tile-rack');
+    if (!gridElLive || !rackElLive) return;
+    const prevGridSize = state.level.gridSize;
+    const gridArr = Array.isArray(board.grid) ? board.grid : Object.entries(board.grid || {});
+    const tilesArr = Array.isArray(board.tiles) ? board.tiles : Object.entries(board.tiles || {});
+    const handArr = Array.isArray(board.hand) ? board.hand : [];
+    state.grid = new Map(gridArr);
+    state.tiles = new Map(tilesArr);
+    state.hand = new Set(handArr);
+    state.isVictory = false;
+    state.level.gridSize = board.gridSize;
+    state.validation = null;
+    const sizeChanged = board.gridSize !== prevGridSize;
+    const expectedCells = state.level.gridSize * state.level.gridSize;
+    const hasCells = gridElLive.querySelectorAll('.grid-cell').length === expectedCells;
+    if (sizeChanged || !hasCells) {
+        renderGridCells(gridElLive, state.level.gridSize, state.level.gridSize);
+        if (!particleBurstInitialized) { initParticleBurstSystem(gridElLive); particleBurstInitialized = true; }
+    } else {
+        gridElLive.querySelectorAll('.tile--placed').forEach(el => el.remove());
+        gridElLive.style.setProperty('--grid-cols', state.level.gridSize);
+        gridElLive.style.setProperty('--grid-rows', state.level.gridSize);
+        document.querySelector('.app')?.style.setProperty('--grid-rows', state.level.gridSize);
+    }
+    renderRack(rackElLive, state.tiles, state.hand);
+    state.grid.forEach((id, pos) => {
+        const [x, y] = pos.split(',').map(Number);
+        const value = state.tiles.get(id);
+        if (value == null) return;
+        const existing = document.getElementById(id);
+        if (existing) existing.remove();
+        const tile = document.createElement('div');
+        tile.id = id;
+        tile.className = 'tile tile--placed';
+        tile.setAttribute('role', 'listitem');
+        tile.setAttribute('tabindex', '0');
+        tile.dataset.value = value;
+        tile.dataset.gridX = x;
+        tile.dataset.gridY = y;
+        tile.innerHTML = `<span class="tile__number">${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[value] ?? value)}</span>`;
+        gridElLive.appendChild(tile);
+        positionTileOnGrid(tile, x, y, gridElLive);
+    });
+    runValidation();
+    saveState();
+    multiplayerCompleteSent = false;
+};
+
+const TOAST_DURATION_MS = 2400;
+const showToast = (text) => {
+    const host = document.getElementById('toast-host');
+    if (!host) return;
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    el.textContent = text;
+    host.innerHTML = '';
+    host.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('toast--visible')));
+    const exit = () => {
+        el.classList.remove('toast--visible');
+        el.classList.add('toast--exit');
+        setTimeout(() => el.remove(), 320);
+    };
+    setTimeout(exit, TOAST_DURATION_MS);
+};
+
+const showLeaderboard = (serverState) => {
+    const overlay = document.getElementById('leaderboard-overlay');
+    const listEl = document.getElementById('leaderboard-list');
+    if (!overlay || !listEl) return;
+    const players = serverState?.players || {};
+    const order = serverState?.joinOrder || Object.keys(players).sort();
+    const winnerId = serverState?.winner || null;
+    const sorted = winnerId ? [winnerId, ...order.filter(id => id !== winnerId)] : order;
+    listEl.innerHTML = '';
+    sorted.forEach(id => {
+        const p = players[id];
+        if (!p) return;
+        const name = (p.name && String(p.name).trim()) || 'Player';
+        const color = /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : 'var(--text-muted)';
+        const isWinner = id === winnerId;
+        const li = document.createElement('li');
+        if (isWinner) li.classList.add('leaderboard-winner');
+        li.innerHTML = `<span class="leaderboard-swatch" style="background:${color}"></span><span class="leaderboard-name">${String(name).replace(/[<&"']/g, c => ({ '<': '&lt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]))}</span>`;
+        listEl.appendChild(li);
+    });
+    overlay.classList.add('leaderboard-overlay--open');
+    overlay.setAttribute('aria-hidden', 'false');
+};
+
+const hideLeaderboard = () => {
+    const overlay = document.getElementById('leaderboard-overlay');
+    if (overlay) {
+        overlay.classList.remove('leaderboard-overlay--open');
+        overlay.setAttribute('aria-hidden', 'true');
     }
 };
 
@@ -513,6 +764,11 @@ const disposeGame = () => {
     stopPartyBoardSyncInterval();
     renderHeaderPlayerDiamondsFn = null;
     lastLobbyState = null;
+    lastShownAdvancedStage = 0;
+    lastShownWinnerId = null;
+    multiplayerCompleteSent = false;
+    partyTransitionInProgress = false;
+    hideLeaderboard();
     delete window.__clearPartyGameOnLeave;
     if (roomTabClaimInterval) clearInterval(roomTabClaimInterval);
     roomTabClaimInterval = null;
@@ -527,6 +783,8 @@ const disposeGame = () => {
     cleanupFns.forEach(fn => fn && fn());
     cleanupFns = [];
     particleBurstInitialized = false;
+    auroraStarted = false;
+    lastInteractedPos = null;
     window.__disposeGame = null;
 };
 
@@ -557,6 +815,9 @@ const initGame = () => {
     const selection = initSelection({ gridEl, rackEl, state, onTilesReturn: handleTilesReturn, onValidate: runValidation });
     if (selection && selection.dispose) cleanupFns.push(selection.dispose);
 
+    const ctxMenu = initContextMenu({ gridEl, rackEl, state, selection, onTilePlaced: placeTile, onTileReturned: removeTile, onValidate: runValidation });
+    if (ctxMenu?.dispose) cleanupFns.push(ctxMenu.dispose);
+
     const cleanupTheme = fixScaleClick(themeBtn, toggleTheme);
     if (cleanupTheme) cleanupFns.push(cleanupTheme);
 
@@ -569,6 +830,12 @@ const initGame = () => {
 
     const cleanupInfo = fixScaleClick(btnInfo, openDialog);
     if (cleanupInfo) cleanupFns.push(cleanupInfo);
+
+    const leaderboardHome = $('leaderboard-home');
+    if (leaderboardHome) leaderboardHome.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (window.Router) window.Router('home.html');
+    });
 
     const onDocClick = (e) => {
         if (e.target.closest?.('.info-dialog-close')?.closest?.('.info-dialog-overlay')) {
@@ -1148,10 +1415,14 @@ const initGame = () => {
                     }
                     if (lobbyWaitEl) lobbyWaitEl.style.display = (serverState.started || isHost) ? 'none' : '';
                     if (joinBtn) {
-                        const canJoin = serverState.started && !serverState.boards?.[myServerId];
+                        const canJoin = serverState.started && !serverState.winner && !serverState.boards?.[myServerId];
                         joinBtn.style.display = canJoin ? '' : 'none';
                         joinBtn.disabled = !canJoin;
                         joinBtn.setAttribute('aria-disabled', String(!canJoin));
+                    }
+                    if (serverState.winner) {
+                        transitionToGamePageAndShowLeaderboard(serverState);
+                        return;
                     }
                     if (serverState.started && serverState.boards?.[myServerId]) startPartyGame();
                 };
@@ -1166,13 +1437,40 @@ const initGame = () => {
                             if (partyConnection) { partyConnection.close(); partyConnection = null; }
                             return;
                         }
-                        if (myId && !myServerId) myServerId = myId;
+                        if (myId) myServerId = myId;
                         if (!myServerId && serverState.players && Object.keys(serverState.players).length === 1)
                             myServerId = Object.keys(serverState.players)[0];
                         const mergedBoards = { ...(lastLobbyState?.boards || {}), ...(serverState.boards || {}) };
                         lastLobbyState = { ...serverState, boards: mergedBoards };
                         if (currentPhase === 'game') {
+                            if (serverState.winner) {
+                                if (serverState.winner !== lastShownWinnerId) {
+                                    lastShownWinnerId = serverState.winner;
+                                    triggerWinnerPulse(serverState.winner);
+                                    setTimeout(() => showLeaderboard(serverState), 500);
+                                }
+                                if (renderHeaderPlayerDiamondsFn) renderHeaderPlayerDiamondsFn(serverState);
+                                return;
+                            }
                             if (serverState.started) renderHeaderPlayerDiamonds(serverState);
+                            const connId = serverState.myId ?? myServerId;
+                            const myBoard = connId ? serverState.boards?.[connId] : null;
+                            const outOfSync = myBoard && typeof myBoard.gridSize === 'number' && myBoard.gridSize !== state.level.gridSize;
+                            const newAdvance = serverState.lastAdvanced && serverState.lastAdvanced.stage > lastShownAdvancedStage;
+                            const needApply = outOfSync || newAdvance;
+                            if (needApply) {
+                                if (newAdvance) {
+                                    lastShownAdvancedStage = serverState.lastAdvanced.stage;
+                                    showToast(`${serverState.lastAdvanced.name || 'Someone'} advanced!`);
+                                    const advancerId = serverState.lastAdvanced?.id;
+                                    if (advancerId) triggerAdvancePulse(advancerId);
+                                    const me = serverState.myId ?? myServerId;
+                                    if (advancerId === me) setTimeout(() => successAnimation(), 300);
+                                } else {
+                                    lastShownAdvancedStage = Math.max(lastShownAdvancedStage, myBoard.gridSize);
+                                }
+                                applyServerBoardAndRender(myBoard);
+                            }
                             const openOverlay = document.getElementById('player-board-dialog-overlay');
                             if (openOverlay?.classList.contains('open')) {
                                 const openId = openOverlay.dataset.viewingPlayerId;
@@ -1215,10 +1513,6 @@ const initGame = () => {
                             renderLobby(pending);
                             window.__pendingLobbyState = null;
                         }
-                        if (!hasAutoFocusedLobbyName && nameInput && !rejoining) {
-                            hasAutoFocusedLobbyName = true;
-                            nameInput.focus();
-                        }
                     });
                     const sendJoin = () => {
                         const name = getLobbyName();
@@ -1245,8 +1539,10 @@ const initGame = () => {
                     if (startBtn) startBtn.addEventListener('click', () => {
                         if (partyConnection?.ready && isHost) {
                             loadSettings();
-                            partyConnection.startGame(state.level.gridSize);
-                            startPartyGame();
+                            const gridSize = 4;
+                            const targetTiles = Math.max(6, Math.floor((Math.min(20, 6 + gridSize * 2)) / 2));
+                            const { hand } = generateLevel({ gridSize, difficulty: 5, targetTiles });
+                            partyConnection.startGame(gridSize, hand);
                         }
                     });
                     if (joinBtn) joinBtn.addEventListener('click', () => {

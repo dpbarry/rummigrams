@@ -47,23 +47,28 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     };
 
     window.__magnetModeActive = false;
-    magnetBtn?.addEventListener('click', () => setMagnetMode(!magnetMode));
+    const onMagnetBtnClick = () => setMagnetMode(!magnetMode);
+    magnetBtn?.addEventListener('click', onMagnetBtnClick);
 
     let enabledByCtrl = false;
 
-    document.addEventListener('keydown', e => {
+    const onKeyDown = e => {
         if (e.key === 'Control' && !e.repeat && !magnetMode) {
             setMagnetMode(true);
             enabledByCtrl = true;
         }
-    });
+    };
 
-    document.addEventListener('keyup', e => {
+    const onKeyUp = e => {
         if (e.key === 'Control' && magnetMode && enabledByCtrl) {
             setMagnetMode(false, false);
             enabledByCtrl = false;
         }
-    });
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
 
     const toggleTileSelection = tile => {
         const id = tile.id;
@@ -97,7 +102,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
 
     const onMagnetTileDown = e => {
         const tile = e.target.closest('.tile');
-        if (!tile) return;
+        if (!tile || e.button === 2) return;
 
         e.preventDefault();
         e.stopPropagation();
@@ -137,6 +142,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     };
 
     const onContainerDown = e => {
+        if (e.button === 2) return;
         if (e.target.closest('.tile')) {
             if (magnetMode && !e.forceDrag) onMagnetTileDown(e);
             return;
@@ -224,6 +230,7 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     };
 
     const onDragStart = e => {
+        if (e.button === 2) return;
         const tile = e.target.closest('.tile--selected');
         if (!tile) {
             if (!magnetMode) clearSelection();
@@ -547,11 +554,18 @@ export const initSelection = ({ gridEl, rackEl, state, onTilesReturn, onValidate
     document.addEventListener('click', onDocumentClick);
     return {
         clearSelection,
+        getSelectedIds: () => new Set(selectedIds),
+        addTileToSelection: (tileId) => {
+            const el = $(tileId);
+            if (el) toggleTileSelection(el);
+        },
         dispose: () => {
             document.removeEventListener('click', onDocumentClick);
+            document.removeEventListener('keydown', onKeyDown);
+            document.removeEventListener('keyup', onKeyUp);
             gameContainer.removeEventListener('pointerdown', onContainerDown, { capture: true });
             rackEl.removeEventListener('pointerdown', onContainerDown, { capture: true });
-            magnetBtn?.removeEventListener('click', () => setMagnetMode(!magnetMode));
+            magnetBtn?.removeEventListener('click', onMagnetBtnClick);
             clearSelection();
         }
     };

@@ -65,7 +65,7 @@ export const initInteractions = ({ gridEl, rackEl, onTilePlaced, onTileReturned,
     const handleDown = e => {
         const tile = e.target.closest('.tile');
         if (!tile || tile.classList.contains('tile--selected')) return;
-
+        if (e.button === 2) return;
         if (tile.classList.contains('tile--placed') && window.__magnetModeActive && !e.forceDrag) return;
 
         e.preventDefault();

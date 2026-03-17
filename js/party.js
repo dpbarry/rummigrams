@@ -52,8 +52,10 @@ export const createPartyConnection = (onState, getPrimary = () => false) => {
     join(name, color) {
       send("JOIN", { name, color });
     },
-    startGame(gridSize) {
-      send("START_GAME", gridSize != null ? { gridSize } : {});
+    startGame(gridSize, hand) {
+      const data = gridSize != null ? { gridSize } : {};
+      if (Array.isArray(hand) && hand.length) data.hand = hand;
+      send("START_GAME", data);
     },
     completeBoard() {
       send("COMPLETE_BOARD");
@@ -63,6 +65,9 @@ export const createPartyConnection = (onState, getPrimary = () => false) => {
     },
     joinGame() {
       send("JOIN_GAME", {});
+    },
+    devAdvance() {
+      send("DEV_ADVANCE", {});
     },
     close() {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();

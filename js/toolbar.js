@@ -66,10 +66,9 @@ export const calcRemainingTiles = (state, validGroupPositions) => {
 
 export const updateRemainingCounter = (count, isVictory = false) => {
     const counter = document.getElementById('remaining-counter');
+    if (!counter) return;
     const countEl = counter.querySelector('.remaining-count');
     const labelEl = counter.querySelector('.remaining-label');
-
-    countEl.textContent = count;
-    countEl.dataset.state = isVictory ? 'victory' : count === 0 ? 'valid' : '';
-    labelEl.textContent = "remaining";
+    if (countEl) { countEl.textContent = count; countEl.dataset.state = isVictory ? 'victory' : count === 0 ? 'valid' : ''; }
+    if (labelEl) labelEl.textContent = 'remaining';
 };

@@ -282,7 +282,9 @@ const initParallaxTiles = () => {
     let mouseX = 0.5, mouseY = 0.5;
     let curX = 0.5, curY = 0.5;
 
+    let rafId;
     const update = () => {
+        if (!scene.isConnected) { cancelAnimationFrame(rafId); return; }
         curX += (mouseX - curX) * 0.06;
         curY += (mouseY - curY) * 0.06;
 
@@ -309,7 +311,7 @@ const initParallaxTiles = () => {
             `;
         });
 
-        requestAnimationFrame(update);
+        rafId = requestAnimationFrame(update);
     };
 
     scene.parentElement.addEventListener('mousemove', e => {
@@ -323,5 +325,5 @@ const initParallaxTiles = () => {
         mouseY = 0.5;
     });
 
-    requestAnimationFrame(update);
+    rafId = requestAnimationFrame(update);
 };

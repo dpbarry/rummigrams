@@ -4,7 +4,7 @@ const TRANSITION_MS = 550;
 const TRANSITION_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 window.runPageTransition = function (oldPage, newPage, slideUp) {
-    if (!oldPage || !newPage) return Promise.resolve();
+    if (!oldPage?.style || !newPage?.style) return Promise.resolve();
     void oldPage.offsetHeight;
     void newPage.offsetHeight;
     const style = `transform ${TRANSITION_MS}ms ${TRANSITION_EASING}`;
@@ -12,6 +12,7 @@ window.runPageTransition = function (oldPage, newPage, slideUp) {
     newPage.style.transition = style;
     return new Promise(r => {
         requestAnimationFrame(() => {
+            if (!oldPage?.style || !newPage?.style) { r(); return; }
             newPage.style.transform = 'translateY(0)';
             oldPage.style.transform = slideUp ? 'translateY(-100%)' : 'translateY(100%)';
             setTimeout(r, TRANSITION_MS);

@@ -265,6 +265,7 @@ export const generatePuzzle = (opts = {}) => {
     const difficulty = opts.difficulty || 5;
     const gridSize = opts.gridSize || 6;
     const params = calcDifficultyParams(difficulty, gridSize);
+    if (opts.targetTiles != null) params.targetTiles = Math.max(3, opts.targetTiles);
 
     let bestSolvable = null;
     let bestAny = null;
